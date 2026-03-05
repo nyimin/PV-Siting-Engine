@@ -1,0 +1,18 @@
+# Virtual environment
+.venv/
+
+# Environment variables (API keys, credentials)
+.env
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyc
+
+# Data and outputs (large files, not for git)
+data/
+outputs/
+
+# IDE
+.vscode/
+.idea/

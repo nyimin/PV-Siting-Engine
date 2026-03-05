@@ -1,0 +1,43 @@
+Traceback (most recent call last):
+  File "D:\Triune\Stack Space - Documents\Code\PVLayoutEngine\layout\routing.py", line 316, in route_mv_cables
+    tail = LineString([sub_on_spine, sub_pt])
+  File "D:\Triune\Stack Space - Documents\Code\PVLayoutEngine\.venv\Lib\site-packages\shapely\geometry\linestring.py", line 76, in __new__
+    geom = shapely.linestrings(coordinates)
+  File "D:\Triune\Stack Space - Documents\Code\PVLayoutEngine\.venv\Lib\site-packages\shapely\decorators.py", line 173, in wrapper
+    result = func(*args, **kwargs)
+  File "D:\Triune\Stack Space - Documents\Code\PVLayoutEngine\.venv\Lib\site-packages\shapely\decorators.py", line 88, in wrapped
+    return func(*args, **kwargs)
+  File "D:\Triune\Stack Space - Documents\Code\PVLayoutEngine\.venv\Lib\site-packages\shapely\creation.py", line 218, in linestrings
+    return lib.linestrings(coords, np.intc(handle_nan), out=out, **kwargs)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: setting an array element with a sequence. The requested array has an inhomogeneous shape after 1 dimensions. The detected shape was (2,) + inhomogeneous part.
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "<string>", line 35, in <module>
+    roads_gdf, mv_cables_gdf = route_mv_cables_and_roads(
+                               ~~~~~~~~~~~~~~~~~~~~~~~~~^
+        inverters_gdf, transformers_gdf, sub_pt, blocks_gdf, config,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        terrain_paths=None, exclusions_gdf=exclusions_gdf
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "D:\Triune\Stack Space - Documents\Code\PVLayoutEngine\layout\routing.py", line 365, in route_mv_cables_and_roads
+    mv_cables_gdf = route_mv_cables(
+        transformers_gdf, substation_point, roads_gdf, config,
+        terrain_paths=terrain_paths, exclusions_gdf=exclusions_gdf
+    )
+  File "D:\Triune\Stack Space - Documents\Code\PVLayoutEngine\layout\routing.py", line 323, in route_mv_cables
+    full_route = LineString([trans_pt, sub_pt])
+  File "D:\Triune\Stack Space - Documents\Code\PVLayoutEngine\.venv\Lib\site-packages\shapely\geometry\linestring.py", line 76, in __new__
+    geom = shapely.linestrings(coordinates)
+  File "D:\Triune\Stack Space - Documents\Code\PVLayoutEngine\.venv\Lib\site-packages\shapely\decorators.py", line 173, in wrapper
+    result = func(*args, **kwargs)
+  File "D:\Triune\Stack Space - Documents\Code\PVLayoutEngine\.venv\Lib\site-packages\shapely\decorators.py", line 88, in wrapped
+    return func(*args, **kwargs)
+  File "D:\Triune\Stack Space - Documents\Code\PVLayoutEngine\.venv\Lib\site-packages\shapely\creation.py", line 218, in linestrings
+    return lib.linestrings(coords, np.intc(handle_nan), out=out, **kwargs)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: setting an array element with a sequence. The requested array has an inhomogeneous shape after 1 dimensions. The detected shape was (2,) + inhomogeneous part.

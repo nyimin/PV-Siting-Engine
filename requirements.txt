@@ -1,0 +1,17 @@
+geopandas
+rasterio
+shapely
+pyproj
+osmnx
+networkx
+numpy
+matplotlib
+rasterstats
+contextily
+pyyaml
+scipy
+requests
+tqdm
+python-dotenv
+folium
+scikit-learn

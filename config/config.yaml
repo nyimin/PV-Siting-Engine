@@ -1,0 +1,87 @@
+project:
+  name: solar_layout
+  output_crs: auto # Auto-detect UTM from site centroid
+  target_ac_mw: 51.2
+
+bess:
+  capacity_mw: 10
+  capacity_mwh: 20
+  # Physical compound sizing (IEC 62619 / NFPA 855)
+  compound_width_m: 60 # m
+  compound_height_m: 30 # m
+  container_gap_m: 3 # min gap between BESS containers (fire safety)
+
+substation:
+  # 33/66 kV step-up substation compound (IEC 61936-1)
+  compound_width_m: 80
+  compound_height_m: 60
+
+om_compound:
+  # O&M office + workshop + warehouse (IEA-PVPS T13 / IRENA BOP)
+  width_m: 100
+  height_m: 50
+  office_area_m2: 175 # main office, SCADA room, meeting room
+  workshop_area_m2: 250 # maintenance workshop + tool store
+  warehouse_area_m2: 125 # spare parts (climate-controlled)
+  guard_post_area_m2: 25 # security post at main gate
+
+roads:
+  # Internal access roads (IRENA Utility-Scale PV / ADB Myanmar road spec)
+  main_collector_width_m: 6 # main spine road (sealed/gravel)
+  maintenance_aisle_width_m: 4 # inter-block maintenance aisles
+  max_gradient_pct: 5 # monsoon drainage and vehicle safety
+
+mv_cables:
+  # 33 kV AC Collection System (IEC 60502-2 / IEC 60287)
+  topology: homerun # one dedicated circuit per block to substation
+  voltage_kv: 33
+  routing: alongside_roads # trench beside road corridors, not cross-country
+  trench_depth_m: 1.2 # under open ground (1.5m under roads)
+
+data:
+  cache_dir: data/cache
+  osm_cache: true
+
+dem:
+  preferred_source: COP30
+  preferred_resolution_m: 30
+  max_acceptable_resolution_m: 90
+  warn_if_coarser_than_m: 30
+  download_retries: 3
+  retry_delay_s: 5
+
+terrain:
+  max_slope_percent: 10
+  preferred_slope_percent: 5
+  excluded_slope_percent: 15
+  north_facing_penalty: true
+
+solar:
+  module_power_w: 635
+  module_length_m: 2.384
+  module_width_m: 1.303
+  modules_per_string: 28
+  strings_per_inverter: 22
+  inverter_capacity_kw: 320
+  orientation: portrait
+  tilt_deg: 26
+  azimuth_deg: 180
+  row_pitch_m: 6.7
+  dc_ac_ratio: 1.22
+  gcr: 0.38
+
+block:
+  inverters_per_block: 10
+  ac_capacity_mw: 3.2
+  dc_capacity_mw: 3.904
+  footprint_ha: 2.5
+
+buffers:
+  buildings_m: 30
+  roads_m: 20
+  rivers_m: 50
+  railways_m: 50
+  power_lines_m: 30
+
+lulc:
+  excluded_classes: [10, 50, 70, 80, 90, 95]
