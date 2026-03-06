@@ -176,32 +176,92 @@ def calculate_curvature(elevation, cellsize):
     curvature = np.where(G**2 + H**2 < 1e-10, 0.0, curvature)
 
     return curvature.astype(np.float32)
-
-
-def calculate_tpi(elevation, radius_pixels=10):
+def classify_slope_direction(slope_deg, aspect_deg, row_azimuth_deg=180):
     """
-    Calculates Topographic Position Index (TPI) to identify valleys and ridges.
-    TPI = Elevation - Mean(Neighborhood).
-    Negative TPI indicates valleys, ravines, and likely drainage channels.
-    Positive TPI indicates ridges and peaks.
+    Returns 'favourable', 'neutral', or 'unfavourable' slope aspect 
+    relative to the panel row orientation.
+    For N-S sloped terrain (N-facing or S-facing), the slope is ACROSS the rows.
+    For E-W sloped terrain, the slope is ALONG the rows (less critical).
     """
-    # Create circular kernel
-    y, x = np.ogrid[-radius_pixels:radius_pixels+1, -radius_pixels:radius_pixels+1]
-    kernel = x**2 + y**2 <= radius_pixels**2
-    kernel = kernel.astype(float)
-    kernel /= kernel.sum()
+    delta = np.abs(((aspect_deg - row_azimuth_deg + 180) % 360) - 180)
+    across_row = delta < 45  # slope runs N-S, perpendicular to E-W rows
+    along_row  = (delta >= 45) & (delta < 135)  # slope runs E-W, along rows
+    return across_row, along_row
 
-    elev = elevation.astype(np.float32)
-    # Handle NaN/NoData to avoid spreading NaNs
-    mask = ~np.isnan(elev) & (elev != 0)
-    elev_safe = np.where(mask, elev, np.mean(elev[mask]))
 
-    mean_elev = convolve(elev_safe, kernel, mode='nearest')
-    tpi = elev - mean_elev
+def calculate_flow_accumulation(dem_path):
+    """
+    Calculates D8 flow accumulation using pysheds to identify natural drainage
+    and compute Topographic Wetness Index (TWI).
+    Returns the flow accumulation array (cells) and a boolean mask of stream channels.
+    """
+    try:
+        from pysheds.grid import Grid
+    except ImportError:
+        logger.warning("pysheds not installed. Skipping D8 flow accumulation.")
+        return None, None
+
+    logger.info(f"    Setting up PySheds grid from: {dem_path}")
     
-    # Mask out non-data areas
-    tpi = np.where(mask, tpi, 0.0)
-    return tpi.astype(np.float32)
+    grid = Grid.from_raster(dem_path)
+    dem = grid.read_raster(dem_path)
+    
+    # Ensure dem is proper Raster type
+    if not hasattr(dem, 'nodata'):
+        dem.nodata = 0
+        
+    logger.info("    Resolving depressions and flats...")
+    try:
+        flooded_dem = grid.fill_depressions(dem)
+        inflated_dem = grid.resolve_flats(flooded_dem)
+    except Exception as e:
+        logger.warning(f"Failed to resolve depressions/flats: {e}. Using raw DEM.")
+        inflated_dem = dem
+
+    logger.info("    Calculating D8 flow direction...")
+    # Standard D8 directional mapping
+    dirmap = (64, 128, 1, 2, 4, 8, 16, 32)
+    fdir = grid.flowdir(inflated_dem, dirmap=dirmap)
+
+    logger.info("    Calculating D8 flow accumulation...")
+    acc = grid.accumulation(fdir, dirmap=dirmap)
+
+    # Clean up output
+    acc = np.where(acc < 0, 0, acc)
+    
+    # Identify stream channels (e.g. collecting > 500 up-slope cells)
+    # 500 cells @ 10x10m = 50,000 m2 catchment
+    stream_mask = acc > 500
+    
+    return acc.astype(np.float32), stream_mask
+        
+
+def calculate_twi(slope_deg, flow_accumulation, cell_area_m2=100.0):
+    """
+    Topographic Wetness Index (TWI) = ln(a / tan(β))
+    a = specific catchment area (accumulated valid area per unit contour length)
+    β = slope in radians
+    
+    Returns array of TWI values.
+    """
+    if flow_accumulation is None:
+        logger.debug("TWI received no flow accumulation, returning zeros.")
+        return np.zeros_like(slope_deg, dtype=np.float32)
+        
+    slope_rad = np.radians(np.clip(slope_deg, 0.1, 89.0))  # avoid log(0)
+    tan_beta = np.tan(slope_rad)
+    tan_beta = np.where(tan_beta < 1e-6, 1e-6, tan_beta)
+    
+    # Specific catchment area = (flow_acc * cell_area) / cell_width
+    # Assuming roughly square cells
+    cell_width = np.sqrt(cell_area_m2)
+    sca = (flow_accumulation * cell_area_m2) / cell_width
+    sca = np.where(sca < cell_width, cell_width, sca) # Min area is 1 cell
+    
+    twi = np.log(sca / tan_beta)
+    return twi.astype(np.float32)
+
+
 
 
 def calculate_tpi(elevation, radius_pixels=10):
@@ -486,6 +546,13 @@ def process_terrain(dem_path, output_dir, config):
     logger.info("  Calculating Hillshade...")
     hillshade = calculate_hillshade(elevation, cellsize_x, cellsize_y)
 
+    logger.info("  Calculating D8 Flow Accumulation (PySheds)...")
+    flow_acc, streams = calculate_flow_accumulation(reprojected_path)
+    
+    logger.info("  Calculating Topographic Wetness Index (TWI)...")
+    cell_area = cellsize_x * cellsize_y
+    twi = calculate_twi(slope_deg, flow_acc, cell_area_m2=cell_area)
+
     # Step 5: Suitability scores
     logger.info("  Calculating Suitability Scores (0–3 scale)...")
     suitability, slope_score, aspect_score = calculate_suitability(
@@ -498,6 +565,8 @@ def process_terrain(dem_path, output_dir, config):
     tri_path       = os.path.join(output_dir, "tri.tif")
     curv_path      = os.path.join(output_dir, "curvature.tif")
     tpi_path       = os.path.join(output_dir, "tpi.tif")
+    twi_path       = os.path.join(output_dir, "twi.tif")
+    streams_path   = os.path.join(output_dir, "streams_d8.tif")
     hillshade_path = os.path.join(output_dir, "hillshade.tif")
     slope_suit_path   = os.path.join(output_dir, "slope_suitability.tif")
     aspect_suit_path  = os.path.join(output_dir, "aspect_suitability.tif")
@@ -508,6 +577,9 @@ def process_terrain(dem_path, output_dir, config):
     _save_raster(tri,          profile, tri_path)
     _save_raster(curvature,    profile, curv_path)
     _save_raster(tpi,          profile, tpi_path)
+    _save_raster(twi,          profile, twi_path)
+    if streams is not None:
+        _save_raster(streams,  profile, streams_path, dtype=rasterio.uint8)
     _save_raster(hillshade,    profile, hillshade_path, dtype=rasterio.uint8)
     _save_raster(slope_score,  profile, slope_suit_path)
     _save_raster(aspect_score, profile, aspect_suit_path)
@@ -528,6 +600,29 @@ def process_terrain(dem_path, output_dir, config):
     logger.info(f"  Buildable area (index≥{threshold}): "
                 f"{np.sum(suitability >= threshold) / suitability.size * 100:.1f}% of raster")
 
+    # Calculate across-row and along-row slope percentages
+    across_mask, along_mask = classify_slope_direction(slope_deg, aspect_deg, row_azimuth_deg=180)
+    
+    # Only count these on slopes > 5 degrees so we don't flag flat land
+    significant_slope = slope_deg > 5.0
+    across_row_area = np.sum(across_mask & significant_slope)
+    along_row_area = np.sum(along_mask & significant_slope)
+    total_valid_area = np.sum(~np.isnan(slope_deg) & (slope_deg >= 0))
+    
+    across_row_pct = (across_row_area / total_valid_area * 100) if total_valid_area > 0 else 0
+    along_row_pct = (along_row_area / total_valid_area * 100) if total_valid_area > 0 else 0
+
+    terrain_stats = {
+        "mean_slope_deg": float(np.nanmean(valid_slope)),
+        "max_slope_deg":  float(np.nanmax(valid_slope)),
+        "std_slope_deg":  float(np.nanstd(valid_slope)),
+        "across_row_slope_pct": float(across_row_pct),
+        "along_row_slope_pct": float(along_row_pct),
+        "mean_tri_m":     float(np.nanmean(tri)),
+        "mean_suitability": float(np.nanmean(suitability)),
+        "buildable_pct_terrain": float((np.sum(suitability >= threshold) / suitability.size) * 100)
+    }
+
     logger.info(f"Terrain analysis outputs saved to {output_dir}")
 
     return {
@@ -537,6 +632,8 @@ def process_terrain(dem_path, output_dir, config):
         "tri":              tri_path,
         "curvature":        curv_path,
         "tpi":              tpi_path,
+        "twi":              twi_path,
+        "streams":          streams_path if streams is not None else None,
         "hillshade":        hillshade_path,
         "slope_suitability":  slope_suit_path,
         "aspect_suitability": aspect_suit_path,
@@ -545,14 +642,5 @@ def process_terrain(dem_path, output_dir, config):
         "crs":              crs,
         "utm_epsg":         utm_crs,
         "site_latitude":    centre_lat,
-        "stats": {
-            "mean_slope_deg":    float(np.nanmean(valid_slope)),
-            "max_slope_deg":     float(np.nanmax(valid_slope)),
-            "std_slope_deg":     float(np.nanstd(valid_slope)),
-            "mean_tri_m":        float(np.nanmean(tri)),
-            "mean_suitability":  float(np.nanmean(suitability)),
-            "buildable_pct_terrain": float(
-                np.sum(suitability >= threshold) / suitability.size * 100
-            ),
-        }
+        "stats": terrain_stats
     }

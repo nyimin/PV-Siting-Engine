@@ -235,6 +235,8 @@ def compile_metrics(site_gdf, buildable_gdf, exclusions_gdf, blocks_gdf, rows_gd
             "mean_slope_deg":  round(terrain_stats.get("mean_slope_deg", 0), 2),
             "max_slope_deg":   round(terrain_stats.get("max_slope_deg", 0), 2),
             "std_slope_deg":   round(terrain_stats.get("std_slope_deg", 0), 2),
+            "across_row_slope_pct": round(terrain_stats.get("across_row_slope_pct", 0), 1),
+            "along_row_slope_pct":  round(terrain_stats.get("along_row_slope_pct", 0), 1),
             "mean_tri_m":      round(terrain_stats.get("mean_tri_m", 0), 2),
             "mean_suitability": round(terrain_stats.get("mean_suitability", 0), 2),
             "buildable_pct_terrain": round(terrain_stats.get("buildable_pct_terrain", 0), 1),
@@ -263,6 +265,8 @@ def generate_report(metrics, output_dir):
 | Mean Slope | {t['mean_slope_deg']}° |
 | Max Slope | {t['max_slope_deg']}° |
 | Slope Std Dev | {t['std_slope_deg']}° |
+| Across-Row Slope Area | {t.get('across_row_slope_pct', 0)}% of site |
+| Along-Row Slope Area | {t.get('along_row_slope_pct', 0)}% of site |
 | Mean TRI | {t['mean_tri_m']} m |
 | Mean Suitability Index | {t['mean_suitability']} / 3.0 |
 | Terrain Buildable (suitability ≥ 2.25) | {t.get('buildable_pct_terrain', 0)}% of raster |

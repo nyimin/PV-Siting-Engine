@@ -29,7 +29,7 @@ def fetch_osm_constraints(site_gdf, cache_dir="data/cache/osm", use_cache=True):
         logger.info(f"Loading OSM constraints from cache: {cache_path}")
         try:
             constraints: dict[str, gpd.GeoDataFrame] = {}
-            for layer in ["buildings", "water", "roads", "railways", "power"]:
+            for layer in ["buildings", "water", "roads", "railways", "power", "power_hv"]:
                 try:
                     constraints[layer] = gpd.read_file(cache_path, layer=layer)
                 except Exception as e:
@@ -63,13 +63,27 @@ def fetch_osm_constraints(site_gdf, cache_dir="data/cache/osm", use_cache=True):
                 # keep only relevant columns to save space, at least geometry
                 cols_to_keep = ['geometry']
                 # keep specific columns if they exist
-                for col in ['name', 'highway', 'building', 'water', 'waterway', 'railway', 'power']:
+                for col in ['name', 'highway', 'building', 'water', 'waterway', 'railway', 'power', 'voltage']:
                     if col in gdf.columns:
                         cols_to_keep.append(col)
                 gdf = gdf[cols_to_keep]
-                results[layer_name] = gdf
+                
+                # Further separate power lines into HV and normal based on voltage
+                if layer_name == "power":
+                    if "voltage" in gdf.columns:
+                        # Attempt to parse voltage to integer (can sometimes be strings like '132000;66000')
+                        hv_mask = gdf["voltage"].str.contains('132|230|400|500|765|66000|132000|230000|33000|400000', na=False)
+                        results["power_hv"] = gdf[hv_mask].copy()
+                        results["power"] = gdf[~hv_mask].copy()
+                    else:
+                        results["power"] = gdf
+                        results["power_hv"] = gpd.GeoDataFrame(columns=cols_to_keep, geometry=[], crs=gdf.crs)
+                else:
+                    results[layer_name] = gdf
             else:
                 results[layer_name] = gpd.GeoDataFrame(geometry=[])
+                if layer_name == "power":
+                    results["power_hv"] = gpd.GeoDataFrame(geometry=[])
         except Exception as e:
             logger.warning(f"  Error fetching {layer_name}: {e}")
             results[layer_name] = gpd.GeoDataFrame(geometry=[])

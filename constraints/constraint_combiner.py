@@ -26,6 +26,7 @@ def process_osm_constraints(osm_dict, site_crs, config):
         "roads":     "roads_m",
         "railways":  "railways_m",
         "power":     "power_lines_m",
+        "power_hv":  "power_hv_lines_m",
     }
 
     default_buffers = {
@@ -34,6 +35,7 @@ def process_osm_constraints(osm_dict, site_crs, config):
         "roads_m":     20,
         "railways_m":  50,
         "power_lines_m": 30,
+        "power_hv_lines_m": 50,
     }
 
     for layer_name, gdf in osm_dict.items():
@@ -242,6 +244,31 @@ def combine_constraints(site_gdf, osm_exclusions, terrain_analysis_paths, config
                 if str(curv_gdf.crs) != str(site_crs):
                     curv_gdf = curv_gdf.to_crs(site_crs)
                 all_exclusions.append(curv_gdf)
+
+    # 4.5 Hydrological Streams (D8 Flow Accumulation from PySheds)
+    streams_path = terrain_analysis_paths.get("streams")
+    stream_buffer_m = buffers_cfg.get("streams_m", 30)  # Default 30m buffer for derived streams
+    if streams_path and os.path.exists(streams_path):
+        logger.info(f"  Applying D8 Flow Accumulation streams with {stream_buffer_m}m buffer...")
+        with rasterio.open(streams_path) as src:
+            stream_mask = src.read(1).astype(np.uint8)
+            stream_transform = src.transform
+            stream_crs = src.crs
+            
+        if stream_mask.max() > 0:
+            stream_results = [
+                {"properties": {"constraint_type": "terrain_streams_d8"}, "geometry": s}
+                for s, v in shapes(stream_mask, mask=stream_mask, transform=stream_transform)
+                if v == 1
+            ]
+            if stream_results:
+                stream_gdf = gpd.GeoDataFrame.from_features(stream_results, crs=stream_crs)
+                if str(stream_gdf.crs) != str(site_crs):
+                    stream_gdf = stream_gdf.to_crs(site_crs)
+                
+                # Apply the buffer
+                stream_gdf.geometry = stream_gdf.geometry.buffer(stream_buffer_m)
+                all_exclusions.append(stream_gdf)
 
     # 5. Site boundary inward setback  (BD-03 — now reads from config)
     setback_m = buffers_cfg.get("site_boundary_m", 10)

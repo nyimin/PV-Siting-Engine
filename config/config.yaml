@@ -77,7 +77,8 @@ terrain:
   gaussian_smooth_sigma: 1.0
 
   # TRI (Terrain Ruggedness Index) max for buildable terrain — metres
-  max_tri_m: 2.5 # >1.5 m average neighbour diff = rocky/rough, needs costly foundations
+  max_tri_m: 1.5 # >1.5 m average neighbour diff = rocky/rough, needs costly foundations
+  tri_marginal_m: 2.5 # flag for foundation cost review (not excluded)
 
   # TPI (Topographic Position Index) max depth for valley/ravine detection.
   # Negative values represent valleys/channels. Areas more negative than this are excluded.
@@ -92,7 +93,7 @@ terrain:
   #   -3.5m         : Aggressive (High CapEx / High Risk)
   #                   Only excludes unmistakable deep ravines. Maximizes MW area
   #                   but requires massive concrete culverts and complex permitting.
-  max_tpi_valley_m: -3.5
+  max_tpi_valley_m: -2.0
 
   # Profile curvature hard exclusion threshold (Zevenbergen-Thorne units)
   max_curvature: 0.4
@@ -147,8 +148,10 @@ buffers:
   buildings_m: 30
   roads_m: 20
   rivers_m: 50
+  streams_m: 30
   railways_m: 50
   power_lines_m: 30
+  power_hv_lines_m: 50 # HV > 66 kV
   site_boundary_m: 10 # inward setback from project boundary (BD-03)
   forest_buffer_m: 50 # shadow/edge buffer around tree cover exclusion (BD-06)
 
