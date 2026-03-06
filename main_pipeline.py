@@ -154,8 +154,28 @@ def run_pipeline(input_boundary_path, requested_mw, config_path="config/config.y
     # This mirrors industry tools (PVcase, Helioscope): select substation point →
     # carve BOP zone → pass remaining buildable area to the block generator.
     slope_path = terrain_paths.get("slope") if terrain_paths else None
+    
+    poi_coord = None
+    poi_cfg = config.get("project", {}).get("poi")
+    if poi_cfg and isinstance(poi_cfg, list) and len(poi_cfg) == 2:
+        logger.info(f"Using user-defined POI string from config: {poi_cfg}")
+        # Assuming the config is [lon, lat] conceptually from the user, but the user provides [lon, lat] 
+        # So we need to ensure the POI matches the geometry's CRS.
+        # But for now, we assume user provided coordinates in the same CRS as the boundary OR WGS84.
+        # To be safe, let's treat it as (lon, lat) WGS84 and reproject to UTM.
+        import pyproj
+        from shapely.ops import transform
+        
+        # We need to project the POI lon/lat to the output UTM CRS.
+        project = pyproj.Transformer.from_crs("EPSG:4326", output_crs, always_xy=True).transform
+        try:
+             poi_x, poi_y = project(poi_cfg[0], poi_cfg[1])
+             poi_coord = (poi_x, poi_y)
+        except Exception as e:
+             logger.warning(f"Failed to project POI config: {e}. Falling back to algorithm guessing.")
+    
     sub_pt, substation_gdf, bess_gdf, om_gdf, guard_gdf, bop_zone_gdf, reduced_buildable_gdf = reserve_bop_zone(
-        site_gdf, buildable_gdf, exclusions_gdf, config, slope_path=slope_path
+        site_gdf, buildable_gdf, exclusions_gdf, config, slope_path=slope_path, poi_coord=poi_coord
     )
 
     # ========== PHASE 6: LAYOUT GENERATION (on BOP-free buildable area) ==========
@@ -193,11 +213,12 @@ def run_pipeline(input_boundary_path, requested_mw, config_path="config/config.y
     logger.info("  PHASE 7: BALANCE OF PLANT EQUIPMENT")
     logger.info("=" * 50)
 
-    inverters_gdf, transformers_gdf, lv_cables_gdf = place_inverters_and_transformers(blocks_gdf, rows_gdf, config)
+    inverters_gdf, transformers_gdf, lv_cables_gdf = place_inverters_and_transformers(blocks_gdf, rows_gdf, config, sub_pt)
 
     roads_gdf, mv_cables_gdf = route_mv_cables_and_roads(
         inverters_gdf, transformers_gdf, sub_pt, blocks_gdf, config,
-        terrain_paths=terrain_paths, exclusions_gdf=exclusions_gdf
+        terrain_paths=terrain_paths, exclusions_gdf=exclusions_gdf,
+        buildable_area_gdf=reduced_buildable_gdf
     )
 
     # ========== PHASE 8: EXPORTS & REPORTING ==========

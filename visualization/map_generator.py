@@ -80,11 +80,17 @@ def create_layout_map(site_gdf, buildable_gdf, blocks_gdf, rows_gdf,
     if rows_gdf is not None and not rows_gdf.empty:
         rows_gdf.plot(ax=ax, facecolor="#1565c0", alpha=0.7, edgecolor="none", zorder=4)
     if roads_gdf is not None and not roads_gdf.empty:
-        roads_gdf.plot(ax=ax, color="#9e9e9e", linewidth=1.5, linestyle="-", zorder=5)
+        # Main spine road — thick amber, drawn above MV cables for visibility
+        spine_roads = roads_gdf[roads_gdf.get("road_type", "").eq("main_collector")] if "road_type" in roads_gdf.columns else gpd.GeoDataFrame()
+        branch_roads = roads_gdf[roads_gdf.get("road_type", "").eq("branch_road")] if "road_type" in roads_gdf.columns else roads_gdf
+        if not spine_roads.empty:
+            spine_roads.plot(ax=ax, color="#e65100", linewidth=3.5, linestyle="-", zorder=10, alpha=0.9)
+        if not branch_roads.empty:
+            branch_roads.plot(ax=ax, color="#bf8040", linewidth=1.8, linestyle="-", zorder=9, alpha=0.85)
     if lv_cables_gdf is not None and not lv_cables_gdf.empty:
         lv_cables_gdf.plot(ax=ax, color="#ffb74d", linewidth=0.8, linestyle=":", zorder=6)
     if mv_cables_gdf is not None and not mv_cables_gdf.empty:
-        mv_cables_gdf.plot(ax=ax, color="#e53935", linewidth=1.2, linestyle="--", zorder=7)
+        mv_cables_gdf.plot(ax=ax, color="#e53935", linewidth=1.2, linestyle="--", zorder=8)
     if inverters_gdf is not None and not inverters_gdf.empty:
         inverters_gdf.plot(ax=ax, color="#ff9800", marker="s", markersize=15, zorder=7)
     if transformers_gdf is not None and not transformers_gdf.empty:
@@ -105,9 +111,10 @@ def create_layout_map(site_gdf, buildable_gdf, blocks_gdf, rows_gdf,
         mpatches.Patch(facecolor="#c8e6c9", alpha=0.4, edgecolor="#388e3c", label="Buildable Area"),
         mpatches.Patch(facecolor="#bbdefb", alpha=0.5, edgecolor="#1565c0", label="PV Blocks"),
         mpatches.Patch(facecolor="#1565c0", alpha=0.7, label="PV Rows"),
-        plt.Line2D([0], [0], color="#9e9e9e", linewidth=2, label="Access Roads"),
+        plt.Line2D([0], [0], color="#e65100", linewidth=3, label="Main Spine Road"),
+        plt.Line2D([0], [0], color="#bf8040", linewidth=2, label="Branch Roads (PCU Access)"),
         plt.Line2D([0], [0], color="#ffb74d", linewidth=1, linestyle=":", label="LV AC Cables"),
-        plt.Line2D([0], [0], color="#e53935", linewidth=1.5, linestyle="--", label="MV Cables"),
+        plt.Line2D([0], [0], color="#e53935", linewidth=1.5, linestyle="--", label="MV Cables (33kV)"),
         plt.Line2D([0], [0], marker="s", color="w", markerfacecolor="#ff9800",  markersize=8, label="String Inverters"),
         plt.Line2D([0], [0], marker="^", color="w", markerfacecolor="#7b1fa2",  markersize=10, label="Block Transformers"),
         plt.Line2D([0], [0], marker="*", color="w", markerfacecolor="#d32f2f",  markersize=14, label="Substation"),

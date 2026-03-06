@@ -25,12 +25,12 @@ def _sample_slope_at_point(pt, slope_path):
     return None
 
 
-def _select_substation_point(site_gdf, buildable_area_gdf, exclusions_gdf, config, slope_path=None):
+def _select_substation_point(site_gdf, buildable_area_gdf, exclusions_gdf, config, slope_path=None, poi_coord=None):
     """
     Selects the best substation location on the site boundary using multi-criteria
-    evaluation. Five equally-weighted criteria (20% each):
+    evaluation. Criteria (equally weighted):
       1. Flat terrain (IEC 61936-1 grading requirement)
-      2. Proximity to site centroid (shorter MV homerun distances)
+      2. Proximity to Point of Interconnection (POI) if provided, else Site Centroid
       3. Proximity to existing roads (cheaper sealed access road tie-in)
       4. Distance from water / flood risk (ADB environmental safeguard)
       5. Located on or very near buildable area (to avoid complex unbuildable terrains)
@@ -39,10 +39,6 @@ def _select_substation_point(site_gdf, buildable_area_gdf, exclusions_gdf, confi
     site_geom = site_gdf.geometry.unary_union
     site_centroid = site_geom.centroid
     
-    # We want points along the site boundary that also overlap the buildable area.
-    # To have candidates to evaluate, we will sample the boundary.
-    boundary = site_geom.boundary
-
     roads_geom = None
     water_geom = None
     if exclusions_gdf is not None and not exclusions_gdf.empty and "constraint_type" in exclusions_gdf.columns:
@@ -53,13 +49,22 @@ def _select_substation_point(site_gdf, buildable_area_gdf, exclusions_gdf, confi
             ["osm_water", "lulc_Permanent water bodies"])]
         if not water_subset.empty:
             water_geom = water_subset.geometry.unary_union
-
+    
+    # We only want to sample points that belong to the buildable area boundary,
+    # as the substation MUST reside within the buildable area.
+    if buildable_area_gdf is None or buildable_area_gdf.empty:
+        return site_centroid, None
+        
+    buildable_geom = buildable_area_gdf.geometry.unary_union
+    boundary = buildable_geom.boundary
+    
     if boundary.is_empty:
         return site_centroid, None
 
     if boundary.geom_type == "MultiLineString":
         boundary = linemerge(boundary)
         if boundary.geom_type == "MultiLineString":
+            # Just take the longest contiguous boundary to sample
             boundary = max(list(boundary.geoms), key=lambda g: g.length)
 
     boundary_length = boundary.length
@@ -98,9 +103,15 @@ def _select_substation_point(site_gdf, buildable_area_gdf, exclusions_gdf, confi
                 else:
                     score_slope = max(0, 40 - (local_slope - 8) * 8)
 
-        # Centroid proximity score
-        dist_c = pt.distance(site_centroid)
-        score_centroid = max(0, 100 * (1 - dist_c / (boundary_length / 4)))
+        # Centroid OR POI proximity score
+        if poi_coord is not None:
+            poi_pt = Point(poi_coord)
+            dist_p = pt.distance(poi_pt)
+            # Normalize against an arbitrary max reasonable distance (e.g. 2000m)
+            score_proximity = max(0, 100 * (1 - dist_p / 2000.0))
+        else:
+            dist_c = pt.distance(site_centroid)
+            score_proximity = max(0, 100 * (1 - dist_c / (boundary_length / 4)))
 
         # Road proximity score
         score_roads = 50.0
@@ -113,14 +124,17 @@ def _select_substation_point(site_gdf, buildable_area_gdf, exclusions_gdf, confi
             dw = water_geom.distance(pt)
             score_water = 0.0 if dw < 100 else min(100.0, (dw - 100) * 0.5)
 
-        # Buildable area proximity score
+        # Buildable area containment score: heavily penalize points where the
+        # surrounding land isn't actually buildable (i.e. we don't want to place
+        # the substation on a tiny sliver of buildable land)
         score_buildable = 100.0
         if buildable_geom:
-            db = buildable_geom.distance(pt)
-            # Severe penalty if not right next to buildable terrain
-            score_buildable = 0.0 if db > 50 else max(0, 100 - db * 2)
+            # Buffer the point and check how much of the buffer is buildable
+            pt_buffer = pt.buffer(50)
+            overlap = pt_buffer.intersection(buildable_geom).area
+            score_buildable = (overlap / pt_buffer.area) * 100.0
 
-        total = (score_slope + score_centroid + score_roads + score_water + score_buildable) / 5
+        total = (score_slope + score_proximity + score_roads + score_water + score_buildable) / 5
         if total > best_score:
             best_score = total
             best_pt = pt
@@ -162,9 +176,9 @@ def _build_compound_polygons(centre_pt, crs, config, slope, site_centroid=None):
     gap = 10.0
     cx, cy = centre_pt.x, centre_pt.y
 
-    # ── Determine INWARD direction: towards site centroid ──
+    # ── Determine INWARD direction: towards buildable area centroid ──
     # The inward unit vector points from boundary point → centroid.
-    # We place compounds by extending in that direction (inside site).
+    # We place compounds by extending in that direction (inside buildable area).
     if site_centroid is not None:
         dx = site_centroid.x - cx
         dy = site_centroid.y - cy
@@ -255,7 +269,7 @@ def _build_compound_polygons(centre_pt, crs, config, slope, site_centroid=None):
 # Public API
 # ─────────────────────────────────────────────────────────────────────────────
 
-def reserve_bop_zone(site_gdf, buildable_area_gdf, exclusions_gdf, config, slope_path=None):
+def reserve_bop_zone(site_gdf, buildable_area_gdf, exclusions_gdf, config, slope_path=None, poi_coord=None):
     """
     **Must run BEFORE generate_solar_blocks().**
 
@@ -282,7 +296,7 @@ def reserve_bop_zone(site_gdf, buildable_area_gdf, exclusions_gdf, config, slope
     crs = site_gdf.crs
 
     # Step 1: Select substation point
-    sub_pt, slope = _select_substation_point(site_gdf, buildable_area_gdf, exclusions_gdf, config, slope_path)
+    sub_pt, slope = _select_substation_point(site_gdf, buildable_area_gdf, exclusions_gdf, config, slope_path, poi_coord)
     slope_str = f", slope={slope:.1f}%" if slope else ""
     logger.info(f"  Substation sited at ({sub_pt.x:.1f}, {sub_pt.y:.1f}){slope_str}")
 
@@ -301,39 +315,23 @@ def reserve_bop_zone(site_gdf, buildable_area_gdf, exclusions_gdf, config, slope
     logger.info(f"  O&M compound:        {om_cfg.get('width_m',100)}m × {om_cfg.get('height_m',50)}m")
 
     # Step 3: Merge all compounds into one BOP zone polygon (+ 20m access road buffer)
-    # We will iteratively shift the compounds inwards towards the site centroid 
-    # until they are strictly contained inside the site boundary.
-    site_geom = site_gdf.geometry.unary_union
+    # We will compute the union. Because the substation was selected on the *buildable* boundary
+    # and points towards the *buildable* centroid, it naturally aligns into the buildable area.
+    # However, to be absolutely rigorous with Step 1 of the 5-step hierarchy,
+    # we don't iteratively slide it. We define it, and strictly intersect it with the buildable area 
+    # to guarantee it never physically steps out of bounds.
     
-    max_shifts = 30
-    shift_step = 10.0
-    dx = site_centroid.x - sub_pt.x
-    dy = site_centroid.y - sub_pt.y
-    mag = np.hypot(dx, dy)
-    ux, uy = (dx/mag, dy/mag) if mag > 0 else (0.0, -1.0)
-
-    shifts = 0
-    while shifts < max_shifts:
-        all_compound_geoms = (
-            list(sub_gdf.geometry) +
-            list(bess_gdf.geometry) +
-            list(om_gdf.geometry) +
-            list(guard_gdf.geometry)
-        )
-        bop_union = unary_union(all_compound_geoms).buffer(20.0)  # 20m = fence + access road
-        
-        if site_geom.contains(bop_union):
-            break
-            
-        # Shift everything inwards
-        sub_gdf.geometry = sub_gdf.geometry.translate(xoff=ux*shift_step, yoff=uy*shift_step)
-        bess_gdf.geometry = bess_gdf.geometry.translate(xoff=ux*shift_step, yoff=uy*shift_step)
-        om_gdf.geometry = om_gdf.geometry.translate(xoff=ux*shift_step, yoff=uy*shift_step)
-        guard_gdf.geometry = guard_gdf.geometry.translate(xoff=ux*shift_step, yoff=uy*shift_step)
-        shifts += 1
-
-    if shifts > 0:
-        logger.info(f"  Shifted BOP zone inwards {shifts * shift_step}m to eliminate boundary violations.")
+    all_compound_geoms = (
+        list(sub_gdf.geometry) +
+        list(bess_gdf.geometry) +
+        list(om_gdf.geometry) +
+        list(guard_gdf.geometry)
+    )
+    bop_raw_union = unary_union(all_compound_geoms).buffer(20.0)  # 20m = fence + access road
+    
+    # Strictly bound the BOP zone to the legal buildable area.
+    buildable_union = buildable_area_gdf.geometry.unary_union
+    bop_union = bop_raw_union.intersection(buildable_union)
 
     bop_zone_gdf = gpd.GeoDataFrame([{
         "compound_id": "BOP_ZONE",

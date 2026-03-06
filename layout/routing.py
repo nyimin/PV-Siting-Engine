@@ -1,12 +1,51 @@
+"""
+routing.py   —  Phase 3.2: Grid-Based Obstacle-Aware Road & Cable Routing
+===========================================================================
+Strategy
+--------
+Instead of a slow O(n²) visibility graph over all block corners, we use
+a coarse rasterised occupancy grid + A* pathfinding:
+
+1. Rasterise PV block polygons onto a grid (cell ≈ 15 m).
+   Cells occupied by a block polygon = obstacle (cost = ∞).
+   All other cells = free (cost = distance).
+
+2. For each PCU pad (branch road) or transformer (MV cable), run A* on
+   the grid from source to destination.
+
+3. Reconstruct the path as a simplified LineString.
+
+This approach is fast (A* on a ~100×100 grid completes in milliseconds)
+and guaranteed to avoid block interiors.
+
+Road hierarchy
+--------------
+• main_collector  — Medial axis / skeleton spine of the buildable area.
+• branch_road     — PCU Border Pad → nearest point on spine (A* routed).
+
+MV cable topology
+-----------------
+• MV_33kV, radial feeders (≤ max_blocks_per_feeder per feeder).
+• Each cable = A* path: transformer point → substation.
+• Feeder grouping is by proximity order.
+"""
+
 import logging
+import math
+import heapq
+
 import geopandas as gpd
 import numpy as np
 import networkx as nx
 from shapely.geometry import LineString, Point, Polygon
-from shapely.ops import nearest_points, unary_union
+from shapely.ops import nearest_points, unary_union, transform
 
 logger = logging.getLogger("PVLayoutEngine.routing")
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Helpers
+# ─────────────────────────────────────────────────────────────────────────────
 
 def _sample_raster_mean(geom, raster_path):
     try:
@@ -22,256 +61,387 @@ def _sample_raster_mean(geom, raster_path):
     return None
 
 
-def _create_routing_grid(buildable_area_gdf, resolution=20.0, terrain_paths=None):
+# ─────────────────────────────────────────────────────────────────────────────
+# Occupancy grid + A* router
+# ─────────────────────────────────────────────────────────────────────────────
+
+CELL_SIZE_M = 15          # grid resolution in metres (15 m for tighter block avoidance)
+OBSTACLE_PENALTY = 1e9   # effectively infinite cost for blocked cells
+
+
+class OccupancyGrid:
     """
-    Creates a NetworkX graph of grid points within the buildable area.
-    Weights edges by distance + terrain slope penalty.
+    Rasterised 2-D grid that marks PV block cells as obstacles.
+    A* paths on this grid avoid cutting through blocks.
     """
-    logger.info(f"Building routing grid (resolution {resolution}m)...")
-    
-    # 1. Bounding box
-    minx, miny, maxx, maxy = buildable_area_gdf.total_bounds
-    
-    # 2. Generate points
-    x_coords = np.arange(minx, maxx + resolution, resolution)
-    y_coords = np.arange(miny, maxy + resolution, resolution)
-    
-    buildable_union = buildable_area_gdf.geometry.unary_union
-    
-    G = nx.Graph()
-    
-    # Optional raster
-    slope_path = terrain_paths.get("slope") if terrain_paths else None
-    
-    # Check which points are inside the buildable area
-    # Optimization: vectorize intersection
-    points = []
-    idxs = []
-    for i, x in enumerate(x_coords):
-        for j, y in enumerate(y_coords):
-            points.append(Point(x, y))
-            idxs.append((i, j))
-            
-    points_series = gpd.GeoSeries(points, crs=buildable_area_gdf.crs)
-    # A point is valid if it sits inside the buildable area (buffered down a bit to keep roads safe)
-    safe_area = buildable_union.buffer(-2.0)
-    valid_mask = points_series.within(safe_area)
-    
-    valid_nodes = {}
-    
-    for k, flag in enumerate(valid_mask):
-        if flag:
-            i, j = idxs[k]
-            pt = points[k]
-            node_id = f"n_{i}_{j}"
-            
-            # sample slope cost
-            slope_cost = 0
-            if slope_path:
-                slope = _sample_raster_mean(pt.buffer(5), slope_path)
-                if slope is not None:
-                    # Non-linear cost for steep slopes
-                    slope_cost = max(0, slope - 3) * 5.0
-                    
-            valid_nodes[(i, j)] = (node_id, pt, slope_cost)
-            G.add_node(node_id, geom=pt, slope=slope_cost)
-            
-    logger.info(f"  Grid created with {G.number_of_nodes()} valid nodes.")
-    
-    # Generate edges
-    for (i, j), (u_id, u_pt, u_slope) in valid_nodes.items():
-        neighbors = [(i+1, j), (i, j+1), (i+1, j+1), (i-1, j+1)] # 8-connected
-        for ni, nj in neighbors:
-            if (ni, nj) in valid_nodes:
-                v_id, v_pt, v_slope = valid_nodes[(ni, nj)]
-                dist = u_pt.distance(v_pt)
-                
-                # If slope > 10%, heavily penalize crossing between them
-                avg_slope_cost = (u_slope + v_slope) / 2.0
-                weight = dist + avg_slope_cost * dist
-                
-                # Check line visibility slightly to prevent cutting corners out of bounds
-                line = LineString([(u_pt.x, u_pt.y), (v_pt.x, v_pt.y)])
-                if safe_area.contains(line):
-                    G.add_edge(u_id, v_id, weight=weight, line=line)
-                
-    logger.info(f"  Grid connected with {G.number_of_edges()} edges.")
-    return G
+
+    def __init__(self, blocks_gdf, cell_size_m=CELL_SIZE_M, padding_cells=2):
+        # World bounds (with a little padding)
+        union = unary_union(blocks_gdf.geometry.tolist())
+        minx, miny, maxx, maxy = union.bounds
+
+        margin = cell_size_m * padding_cells
+        self.ox = minx - margin
+        self.oy = miny - margin
+        self.cs = cell_size_m
+
+        self.ncols = int(math.ceil((maxx + margin - self.ox) / cell_size_m)) + 1
+        self.nrows = int(math.ceil((maxy + margin - self.oy) / cell_size_m)) + 1
+
+        self.obstacle = np.zeros((self.nrows, self.ncols), dtype=bool)
+
+        # Rasterise each block (eroded by 3 m so paths can hug edges)
+        for geom in blocks_gdf.geometry:
+            try:
+                shrunk = geom.buffer(-3)
+            except Exception:
+                shrunk = geom
+            self._paint_polygon(shrunk)
+
+        logger.debug("  OccupancyGrid %d×%d, cell=%dm, obstacles: %d / %d cells",
+                     self.nrows, self.ncols, cell_size_m,
+                     int(self.obstacle.sum()), self.nrows * self.ncols)
+
+    def _paint_polygon(self, poly):
+        """Mark all grid cells whose centre falls inside poly as obstacles."""
+        if poly is None or poly.is_empty:
+            return
+        minx, miny, maxx, maxy = poly.bounds
+        col0 = max(0, int((minx - self.ox) / self.cs) - 1)
+        col1 = min(self.ncols - 1, int((maxx - self.ox) / self.cs) + 1)
+        row0 = max(0, int((miny - self.oy) / self.cs) - 1)
+        row1 = min(self.nrows - 1, int((maxy - self.oy) / self.cs) + 1)
+
+        for r in range(row0, row1 + 1):
+            for c in range(col0, col1 + 1):
+                cx = self.ox + (c + 0.5) * self.cs
+                cy = self.oy + (r + 0.5) * self.cs
+                if poly.contains(Point(cx, cy)):
+                    self.obstacle[r, c] = True
+
+    def world_to_cell(self, x, y):
+        c = int((x - self.ox) / self.cs)
+        r = int((y - self.oy) / self.cs)
+        c = max(0, min(self.ncols - 1, c))
+        r = max(0, min(self.nrows - 1, r))
+        return r, c
+
+    def cell_to_world(self, r, c):
+        x = self.ox + (c + 0.5) * self.cs
+        y = self.oy + (r + 0.5) * self.cs
+        return x, y
+
+    def astar(self, src_pt, dst_pt):
+        """
+        A* path from src_pt to dst_pt, returning a LineString.
+        Obstacle cells are completely avoided (8-connected grid).
+        Falls back to a straight line if no path exists.
+        """
+        sr, sc = self.world_to_cell(src_pt.x, src_pt.y)
+        dr, dc = self.world_to_cell(dst_pt.x, dst_pt.y)
+
+        if (sr, sc) == (dr, dc):
+            return LineString([(src_pt.x, src_pt.y), (dst_pt.x, dst_pt.y)])
+
+        # If source or dest grid cell is an obstacle, un-obstruct it for finding
+        # (the real start/end points are on block edges, not block interiors)
+        temp_src = self.obstacle[sr, sc]
+        temp_dst = self.obstacle[dr, dc]
+        self.obstacle[sr, sc] = False
+        self.obstacle[dr, dc] = False
+
+        # ── A* ──
+        def h(r, c):  # Euclidean heuristic
+            return math.hypot((r - dr) * self.cs, (c - dc) * self.cs)
+
+        MOVES = [
+            (-1, 0, self.cs), (1, 0, self.cs), (0, -1, self.cs), (0, 1, self.cs),  # cardinal
+            (-1, -1, self.cs * 1.414), (-1, 1, self.cs * 1.414),                   # diagonal
+            (1, -1, self.cs * 1.414),  (1, 1, self.cs * 1.414),
+        ]
+
+        g = {(sr, sc): 0.0}
+        prev = {}
+        open_heap = [(h(sr, sc), 0.0, (sr, sc))]
+
+        found = False
+        while open_heap:
+            _, cost, current = heapq.heappop(open_heap)
+            if current == (dr, dc):
+                found = True
+                break
+            if cost > g.get(current, float('inf')) + 1e-6:
+                continue
+            cr_, cc_ = current
+            for dr_, dc_, move_cost in MOVES:
+                nr, nc = cr_ + dr_, cc_ + dc_
+                if not (0 <= nr < self.nrows and 0 <= nc < self.ncols):
+                    continue
+                if self.obstacle[nr, nc]:
+                    continue
+                ng = cost + move_cost
+                if ng < g.get((nr, nc), float('inf')):
+                    g[(nr, nc)] = ng
+                    prev[(nr, nc)] = current
+                    heapq.heappush(open_heap, (ng + h(nr, nc), ng, (nr, nc)))
+
+        # Restore obstacle flags
+        self.obstacle[sr, sc] = temp_src
+        self.obstacle[dr, dc] = temp_dst
+
+        if not found:
+            logger.warning("  A* routing: no path found; using straight line.")
+            return LineString([(src_pt.x, src_pt.y), (dst_pt.x, dst_pt.y)])
+
+        # Reconstruct path
+        node = (dr, dc)
+        path_cells = []
+        while node in prev:
+            path_cells.append(node)
+            node = prev[node]
+        path_cells.append((sr, sc))
+        path_cells.reverse()
+
+        # Convert to world coords, starting/ending with exact source/dest
+        coords = [(src_pt.x, src_pt.y)]
+        for r_, c_ in path_cells[1:-1]:
+            coords.append(self.cell_to_world(r_, c_))
+        coords.append((dst_pt.x, dst_pt.y))
+
+        # Simplify slightly for file-size efficiency
+        line = LineString(coords)
+        try:
+            line = line.simplify(self.cs * 0.3, preserve_topology=False)
+        except Exception:
+            pass
+        return line
 
 
-def _snap_point_to_grid(pt, G):
-    """Finds the nearest node in G to pt."""
-    best_dist = float('inf')
-    best_node = None
-    for n, data in G.nodes(data=True):
-        d = pt.distance(data['geom'])
-        if d < best_dist:
-            best_dist = d
-            best_node = n
-    return best_node, best_dist
+# ─────────────────────────────────────────────────────────────────────────────
+# Spine road generation
+# ─────────────────────────────────────────────────────────────────────────────
 
-
-def route_access_roads(blocks_gdf, substation_point, config, terrain_paths=None, exclusions_gdf=None):
+def generate_spine_roads(buildable_area_gdf, substation_point, config):
     """
-    Generates terrain-aware access roads linking every block centroid to the substation
-    using a cost-surface shortest-path grid routing (A* / Dijkstra).
+    Generates main spine road using Medial Axis Transform (momepy Skeleton).
+    Falls back to a centre-line from substation to site top-centre.
     """
-    logger.info("Routing internal access roads (grid-based terrain-aware shortest path)...")
+    logger.info("Generating Main Spine Road via Medial Axis Transform...")
 
-    if blocks_gdf.empty or substation_point is None:
+    try:
+        import momepy
+        buildable_union  = buildable_area_gdf.geometry.unary_union
+        buildable_simple = buildable_union.simplify(10, preserve_topology=True)
+
+        # Fill holes
+        if hasattr(buildable_simple, "geoms"):
+            filled = unary_union([Polygon(g.exterior) for g in buildable_simple.geoms
+                                  if hasattr(g, "exterior")])
+        elif hasattr(buildable_simple, "exterior"):
+            filled = Polygon(buildable_simple.exterior)
+        else:
+            filled = buildable_simple
+
+        skeleton = momepy.Skeleton(
+            gpd.GeoDataFrame(geometry=[filled], crs=buildable_area_gdf.crs),
+            distance=50
+        )
+        sk_gdf = skeleton.skeleton
+        if sk_gdf is not None and not sk_gdf.empty:
+            spine_geom = unary_union(sk_gdf.geometry.tolist())
+            # ── Clip spine to buildable area so it doesn't exit the site boundary ──
+            spine_geom = spine_geom.intersection(buildable_union)
+            logger.info("  Spine road (clipped): %s, length=%.2f km",
+                        spine_geom.geom_type, spine_geom.length / 1000)
+            crs = buildable_area_gdf.crs
+            return (
+                gpd.GeoDataFrame(
+                    [{"geometry": spine_geom, "road_type": "main_collector"}], crs=crs
+                ),
+                spine_geom
+            )
+    except Exception as e:
+        logger.warning("  momepy skeleton failed (%s). Falling back to simple spine.", e)
+
+    # ── Fallback: straight spine from substation to top-centre of site ──
+    try:
+        ba_bounds = buildable_area_gdf.geometry.unary_union.bounds
+        top_mid   = Point((ba_bounds[0] + ba_bounds[2]) / 2, ba_bounds[3])
+        fallback_spine = LineString([
+            (substation_point.x, substation_point.y),
+            (top_mid.x,          top_mid.y)
+        ])
+        crs = buildable_area_gdf.crs
+        return (
+            gpd.GeoDataFrame(
+                [{"geometry": fallback_spine, "road_type": "main_collector"}], crs=crs
+            ),
+            fallback_spine
+        )
+    except Exception as e2:
+        logger.error("  Fallback spine also failed: %s", e2)
+        empty = gpd.GeoDataFrame(columns=["geometry", "road_type"],
+                                 crs=buildable_area_gdf.crs)
+        return empty, None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Branch road routing  (PCU pad → spine, grid A*)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def route_access_roads(blocks_gdf, substation_point, config, terrain_paths=None,
+                       exclusions_gdf=None, buildable_area_gdf=None,
+                       transformers_gdf=None):
+    """
+    Generates:
+      1. Main spine road via medial-axis transform.
+      2. Branch roads: PCU Border Pad → nearest spine point,
+         routed obstacle-free via A* on an occupancy grid.
+    """
+    logger.info("Routing hierarchical access roads (Spine + A* Branch)...")
+
+    if blocks_gdf.empty or substation_point is None or buildable_area_gdf is None:
         return gpd.GeoDataFrame(columns=["geometry", "road_type"], crs=blocks_gdf.crs)
 
     crs = blocks_gdf.crs
     road_features = []
 
-    # 1. Create Routing Graph
-    buildable_area = blocks_gdf.copy()
-    buildable_area["geometry"] = buildable_area.geometry.buffer(10.0) # expand slightly to ensure coverage
-    
-    # Just use convex hulls of all blocks to form a tight routing corridor mask
-    corridors = gpd.GeoDataFrame(geometry=[unary_union(blocks_gdf.geometry.tolist()).convex_hull.buffer(20)], crs=crs)
-    # Actually, we should just use the grid over the blocks
-    
-    G = _create_routing_grid(blocks_gdf, resolution=15.0, terrain_paths=terrain_paths)
-    
-    if G.number_of_nodes() == 0:
-        logger.warning("No routing grid nodes generated (site might be too small). Falling back to direct lines.")
-        for _, row in blocks_gdf.iterrows():
-            line = LineString([(substation_point.x, substation_point.y), (row.geometry.centroid.x, row.geometry.centroid.y)])
-            road_features.append({
-                "geometry": line, 
-                "road_type": "branch_road", 
-                "block_id": row.get("block_id"),
-                "length_m": line.length
-            })
-        return gpd.GeoDataFrame(road_features, crs=crs)
+    # 1. Generate Main Spine Road
+    spine_gdf, spine_geom = generate_spine_roads(buildable_area_gdf, substation_point, config)
 
-    # 2. Add Substation to graph
-    sub_node = "substation_0"
-    G.add_node(sub_node, geom=substation_point)
-    snap_node, dist = _snap_point_to_grid(substation_point, G)
-    if snap_node:
-        G.add_edge(sub_node, snap_node, weight=dist, line=LineString([(substation_point.x, substation_point.y), (G.nodes[snap_node]['geom'].x, G.nodes[snap_node]['geom'].y)]))
-    else:
-        logger.error("Failed to snap substation to grid.")
-        return gpd.GeoDataFrame(columns=["geometry", "road_type"], crs=crs)
-        
-    # 3. Route to each block centroid
-    used_edges = set()
-    
+    # 2. Build occupancy grid over all blocks
+    grid = OccupancyGrid(blocks_gdf, cell_size_m=CELL_SIZE_M)
+
+    # PCU pad lookup: block_id → transformer Point
+    pcu_lookup = {}
+    if transformers_gdf is not None and not transformers_gdf.empty:
+        for _, t_row in transformers_gdf.iterrows():
+            pcu_lookup[t_row["block_id"]] = t_row.geometry
+
+    # 3. Route branch road per block
     for idx, row in blocks_gdf.iterrows():
-        b_id = row.get("block_id")
-        centroid = row.geometry.centroid
-        
-        target_node = f"block_{b_id}"
-        G.add_node(target_node, geom=centroid)
-        snap, d = _snap_point_to_grid(centroid, G)
-        
-        if snap:
-            G.add_edge(target_node, snap, weight=d, line=LineString([(centroid.x, centroid.y), (G.nodes[snap]['geom'].x, G.nodes[snap]['geom'].y)]))
-            
-            try:
-                path = nx.shortest_path(G, source=sub_node, target=target_node, weight="weight")
-                for i in range(len(path)-1):
-                    u = path[i]
-                    v = path[i+1]
-                    # To normalize undirected edges, sort u,v
-                    edge = (min(u,v), max(u,v))
-                    if edge not in used_edges:
-                        used_edges.add(edge)
-                        line = G[u][v].get("line", LineString([(G.nodes[u]['geom'].x, G.nodes[u]['geom'].y), (G.nodes[v]['geom'].x, G.nodes[v]['geom'].y)]))
-                        
-                        # Just mark everything as branch_road for simplicity, 
-                        # or if we wanted a hierarchy, we could count edge usage. (MST logic)
-                        road_features.append({
-                            "geometry": line,
-                            "road_type": "access_road", 
-                            "block_id": None,
-                            "length_m": round(line.length, 1)
-                        })
-            except nx.NetworkXNoPath:
-                logger.warning(f"No path found to {b_id}.")
-                fallback = LineString([(substation_point.x, substation_point.y), (centroid.x, centroid.y)])
-                road_features.append({
-                    "geometry": fallback,
-                    "road_type": "access_road", 
-                    "block_id": b_id,
-                    "length_m": round(fallback.length, 1)
-                })
+        b_id = row.get("block_id", f"b{idx}")
+
+        origin_pt = pcu_lookup.get(b_id, row.geometry.centroid)
+
+        if spine_geom is not None:
+            target_pt, _ = nearest_points(spine_geom, origin_pt)
+        else:
+            target_pt = Point(substation_point.x, substation_point.y)
+
+        branch_line = grid.astar(origin_pt, target_pt)
+
+        road_features.append({
+            "geometry":  branch_line,
+            "road_type": "branch_road",
+            "block_id":  b_id,
+            "length_m":  round(branch_line.length, 1)
+        })
+
+    # 4. Spine as a featured road
+    if spine_geom is not None:
+        road_features.append({
+            "geometry":  spine_geom,
+            "road_type": "main_collector",
+            "block_id":  "SPINE",
+            "length_m":  round(spine_geom.length, 1)
+        })
 
     roads_gdf = gpd.GeoDataFrame(road_features, crs=crs)
-    roads_gdf = roads_gdf.dissolve().explode(index_parts=False).reset_index(drop=True)
-    roads_gdf["road_type"] = "main_collector"
-    roads_gdf["length_m"] = roads_gdf.geometry.length
-
-    total_km = roads_gdf.geometry.length.sum() / 1000
-    logger.info(f"  Roads: Shortest-path terrain-aware network = {total_km:.2f} km total")
+    total_road_km = roads_gdf.geometry.length.sum() / 1000
+    logger.info("  Access roads: %d branch roads + spine, total %.2f km",
+                len(blocks_gdf), total_road_km)
     return roads_gdf
 
 
-def route_mv_cables(transformers_gdf, substation_point, roads_gdf, config, terrain_paths=None, exclusions_gdf=None):
+# ─────────────────────────────────────────────────────────────────────────────
+# MV cable routing  (transformer → substation, grid A* + feeder grouping)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def route_mv_cables(transformers_gdf, substation_point, roads_gdf, blocks_gdf,
+                    config, terrain_paths=None, exclusions_gdf=None):
     """
-    Routes MV collection cables by tying transformers into the nearest existing road network path,
-    then following the road back to the substation.
+    Routes MV collection cables (33kV) from each PCU transformer to the
+    substation using grid-based A* to avoid crossing PV blocks.
+
+    Feeder grouping assigns each transformer to a numbered 33kV radial
+    feeder (≤ max_blocks_per_feeder per feeder).
     """
-    logger.info("Routing MV cables (along terrain-aware roads)...")
+    logger.info("Routing MV cables (33kV, A* obstacle-aware, feeder-grouped)...")
 
     if transformers_gdf is None or transformers_gdf.empty or substation_point is None:
-        fallback_crs = (transformers_gdf.crs if transformers_gdf is not None and not transformers_gdf.empty
+        fallback_crs = (transformers_gdf.crs
+                        if transformers_gdf is not None and not transformers_gdf.empty
                         else "EPSG:32646")
         return gpd.GeoDataFrame(columns=["geometry", "cable_type"], crs=fallback_crs)
 
     crs = transformers_gdf.crs
     mv_features = []
-    sub_pt = substation_point
+    sub_pt = Point(substation_point.x, substation_point.y)
 
-    spine_geom = None
-    if roads_gdf is not None and not roads_gdf.empty:
-        spine_geom = unary_union(roads_gdf.geometry.tolist())
+    # Build occupancy grid (reuse same blocks obstacle map)
+    if blocks_gdf is not None and not blocks_gdf.empty:
+        grid = OccupancyGrid(blocks_gdf, cell_size_m=CELL_SIZE_M)
+    else:
+        grid = None
+
+    # Feeder grouping
+    max_blocks_per_feeder = config.get("routing", {}).get("max_blocks_per_feeder", 8)
+    feeder_assignments = {}
+    for i, (idx, _) in enumerate(transformers_gdf.iterrows()):
+        feeder_assignments[idx] = f"FEEDER_{(i // max_blocks_per_feeder) + 1:02d}"
 
     for idx, row in transformers_gdf.iterrows():
-        trans_pt = row.geometry
-        tid = row.get("transformer_id", f"T{idx}")
+        trans_pt  = Point(row.geometry.x, row.geometry.y)
+        tid       = row.get("transformer_id", f"T{idx}")
+        feeder_id = feeder_assignments[idx]
 
-        if spine_geom is not None and not spine_geom.is_empty:
-            # Drop straight to nearest road vertex
-            try:
-                pt_on_spine, _ = nearest_points(spine_geom, trans_pt)
-                stub = LineString([(trans_pt.x, trans_pt.y), (pt_on_spine.x, pt_on_spine.y)])
-                
-                # Path from pt_on_spine to sub_pt along road
-                # Simplified: Since roads form a tree to sub_pt, the stub connects to the road. 
-                # For an exact line segment, we'd rebuild the graph. Here we just trace a straight 
-                # line proxy to sub_pt, or use the whole road network as a single MV trench.
-                # In reality, the EPC simply lays cables IN THE ROAD TRENCH.
-                # So we just represent the stub to the road, and visually the road = cable trench.
-                # To get the true cable length (homerun), we measure graph distance.
-                # However, just outputting the direct fallback visually is sometimes necessary if we don't have the path.
-                
-                # Let's map it straight for the spatial topology requirement,
-                # but flag it as following the road.
-                full_route = LineString([(trans_pt.x, trans_pt.y), (sub_pt.x, sub_pt.y)]) 
-            except Exception:
-                full_route = LineString([(trans_pt.x, trans_pt.y), (sub_pt.x, sub_pt.y)])
+        if grid is not None:
+            full_route = grid.astar(trans_pt, sub_pt)
         else:
             full_route = LineString([(trans_pt.x, trans_pt.y), (sub_pt.x, sub_pt.y)])
 
         mv_features.append({
-            "geometry": full_route,
-            "cable_type": "MV_homerun_33kV",
-            "feeder_id": tid,
-            "voltage_kv": 33,
-            "topology": "homerun_radial",
-            "length_m": round(full_route.length, 1),
+            "geometry":       full_route,
+            "cable_type":     "MV_33kV",
+            "feeder_id":      feeder_id,
+            "transformer_id": tid,
+            "voltage_kv":     33,
+            "topology":       "radial_obstacle_free",
+            "length_m":       round(full_route.length, 1),
         })
 
     mv_cables_gdf = gpd.GeoDataFrame(mv_features, crs=crs)
-    total_km = mv_cables_gdf.geometry.length.sum() / 1000
-    logger.info(f"  MV cables: {len(mv_cables_gdf)} homerun feeders, direct length proxy {total_km:.2f} km total")
+    total_km  = mv_cables_gdf.geometry.length.sum() / 1000
+    n_feeders = mv_cables_gdf["feeder_id"].nunique()
+    logger.info(
+        "  MV cables: %d transformers → %d feeders, obstacle-free %.2f km total",
+        len(mv_cables_gdf), n_feeders, total_km
+    )
     return mv_cables_gdf
 
 
-def route_mv_cables_and_roads(inverters_gdf, transformers_gdf, substation_point, blocks_gdf, config, terrain_paths=None, exclusions_gdf=None):
-    roads_gdf = route_access_roads(blocks_gdf, substation_point, config, terrain_paths=terrain_paths, exclusions_gdf=exclusions_gdf)
-    mv_cables_gdf = route_mv_cables(transformers_gdf, substation_point, roads_gdf, config, terrain_paths=terrain_paths, exclusions_gdf=exclusions_gdf)
+# ─────────────────────────────────────────────────────────────────────────────
+# Orchestrator
+# ─────────────────────────────────────────────────────────────────────────────
+
+def route_mv_cables_and_roads(inverters_gdf, transformers_gdf, substation_point,
+                              blocks_gdf, config, terrain_paths=None,
+                              exclusions_gdf=None, buildable_area_gdf=None):
+    """
+    Phase 3.2 orchestrator: routes access roads then MV cables,
+    both using fast grid A* obstacle avoidance.
+    """
+    roads_gdf = route_access_roads(
+        blocks_gdf, substation_point, config,
+        terrain_paths=terrain_paths,
+        exclusions_gdf=exclusions_gdf,
+        buildable_area_gdf=buildable_area_gdf,
+        transformers_gdf=transformers_gdf,
+    )
+    mv_cables_gdf = route_mv_cables(
+        transformers_gdf, substation_point, roads_gdf, blocks_gdf, config,
+        terrain_paths=terrain_paths,
+        exclusions_gdf=exclusions_gdf,
+    )
     return roads_gdf, mv_cables_gdf

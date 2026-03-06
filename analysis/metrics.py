@@ -6,97 +6,12 @@ import geopandas as gpd
 import numpy as np
 from shapely.geometry import Point
 
+from terrain.earthworks import calculate_earthworks
+from layout.yield_model import calculate_yield
+
 logger = logging.getLogger("PVLayoutEngine.outputs")
 
-def _get_pvwatts_yield(lat, lon, dc_mw, config):
-    """
-    Calls the NREL PVWatts V8 API to calculate annual energy yield (MWh).
-    Falls back to a latitude-aware default if no API key is available.
-    Returns (annual_yield_mwh, used_api: bool)
-    """
-    api_key = os.getenv("PVWATTS_API_KEY")
-    if not api_key:
-        api_key = config.get("api", {}).get("pvwatts_key")
 
-    if not api_key or api_key == "DEMO_KEY":
-        logger.warning("No valid PVWatts API key — using default yield estimate (1600 kWh/kWp).")
-        return dc_mw * 1600.0, False
-
-    # Hemisphere-aware optimal azimuth (EC-03 fix)
-    azimuth = 180 if lat >= 0 else 0
-
-    url = "https://developer.nrel.gov/api/pvwatts/v8.json"
-    params = {
-        "api_key": api_key,
-        "lat": lat,
-        "lon": lon,
-        "system_capacity": dc_mw * 1000,
-        "azimuth": azimuth,
-        "tilt": config.get("solar", {}).get("tilt_deg", 25),
-        "array_type": 1 if config.get("solar", {}).get("tracking", "fixed") != "fixed" else 0,
-        "module_type": 0,
-        "losses": 14.07,
-    }
-
-    try:
-        response = requests.get(url, params=params, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        annual_yield_kwh = data.get("outputs", {}).get("ac_annual", 0)
-        return annual_yield_kwh / 1000.0, True
-    except Exception as e:
-        logger.error(f"PVWatts API call failed: {e}")
-        return dc_mw * 1600.0, False
-
-def _estimate_earthworks(blocks_gdf, terrain_paths):
-    """
-    Estimates rough Cut/Fill dirt moving volume (m3) locally using a horizontal 
-    grading plane over each block. Rejects blocks where max cut > 1.5m.
-    """
-    total_volume_m3 = 0.0
-    rejected_area_ha = 0.0
-    
-    if not terrain_paths or "dem_utm" not in terrain_paths:
-        return 0.0, 0.0
-
-    dem_path = terrain_paths["dem_utm"]
-    
-    try:
-        import rasterio
-        from rasterio.mask import mask
-        
-        with rasterio.open(dem_path) as src:
-            transform = src.transform
-            pixel_area = abs(transform.a * transform.e)
-            
-            for idx, block in blocks_gdf.iterrows():
-                geom = block.geometry
-                
-                # Mask DEM to block
-                out_image, _ = mask(src, [geom], crop=True)
-                valid = out_image[out_image != src.nodata]
-                
-                if valid.size < 10:
-                    continue
-                    
-                mean_elev = np.nanmean(valid)
-                max_elev = np.nanmax(valid)
-                max_cut = max_elev - mean_elev
-                
-                area_m2 = geom.area
-                
-                if max_cut > 1.5:
-                    rejected_area_ha += area_m2 / 10000.0
-                else:
-                    # Cut volume: sum of elevation differences above mean * pixel area
-                    cuts = valid[valid > mean_elev] - mean_elev
-                    vol_m3 = np.sum(cuts) * pixel_area
-                    total_volume_m3 += vol_m3
-                    
-    except Exception as e:
-        logger.warning(f"Failed earthworks estimation: {e}")
-        
-    return total_volume_m3, rejected_area_ha
 def compile_metrics(site_gdf, buildable_gdf, exclusions_gdf, blocks_gdf, rows_gdf,
                     inverters_gdf, transformers_gdf, substation_gdf, bess_gdf, mv_cables_gdf, lv_cables_gdf, roads_gdf,
                     capacity_info, terrain_stats=None, config=None, dem_warnings=None, terrain_paths=None,
@@ -126,13 +41,13 @@ def compile_metrics(site_gdf, buildable_gdf, exclusions_gdf, blocks_gdf, rows_gd
     om_workshop_m2 = om_cfg.get("workshop_area_m2", 0)
     om_warehouse_m2 = om_cfg.get("warehouse_area_m2", 0)
 
-    # Earthworks & PVWatts
+    # Earthworks & PVWatts Yield
     site_wgs84 = site_gdf.to_crs(epsg=4326)
     centroid = site_wgs84.geometry.unary_union.centroid
     lat, lon = centroid.y, centroid.x
 
-    annual_yield_mwh, pvwatts_used_api = _get_pvwatts_yield(lat, lon, installed_dc_mw, config)
-    earthworks_m3, ew_rejected_ha = _estimate_earthworks(blocks_gdf, terrain_paths)
+    annual_p50_mwh, annual_p90_mwh, spec_yield, pvwatts_used = calculate_yield(lat, lon, installed_dc_mw, config)
+    cut_m3, fill_m3, ew_capex, ew_rejected_ha = calculate_earthworks(blocks_gdf, terrain_paths, config)
 
     # Component counts
     num_blocks = len(blocks_gdf)
@@ -210,10 +125,15 @@ def compile_metrics(site_gdf, buildable_gdf, exclusions_gdf, blocks_gdf, rows_gd
         "om_office_area_m2": om_office_m2,
         "om_workshop_area_m2": om_workshop_m2,
         "om_warehouse_area_m2": om_warehouse_m2,
-        "annual_yield_mwh": round(annual_yield_mwh, 2),
-        "specific_yield_kwh_kwp": round((annual_yield_mwh * 1000) / (installed_dc_mw * 1000), 2) if installed_dc_mw > 0 else 0,
-        "pvwatts_used_api": pvwatts_used_api,
-        "earthworks_volume_m3": round(earthworks_m3, 2),
+        
+        "annual_p50_yield_mwh": round(annual_p50_mwh, 2),
+        "annual_p90_yield_mwh": round(annual_p90_mwh, 2),
+        "specific_yield_kwh_kwp": round(spec_yield, 2),
+        "pvwatts_used_api": pvwatts_used,
+        
+        "ew_cut_m3": round(cut_m3, 2),
+        "ew_fill_m3": round(fill_m3, 2),
+        "ew_capex_usd": round(ew_capex, 2),
         "earthworks_rejected_ha": round(ew_rejected_ha, 2),
 
         # Warnings
@@ -330,7 +250,8 @@ def generate_report(metrics, output_dir):
 |-----------|-------|
 | BESS Capacity | {metrics['bess_capacity_mw']} MW / {metrics['bess_capacity_mwh']} MWh |
 | BESS Duration | {round(metrics['bess_capacity_mwh'] / metrics['bess_capacity_mw'], 1) if metrics['bess_capacity_mw'] > 0 else 'N/A'} hours |
-| Estimated Annual Yield | {metrics['annual_yield_mwh']:,.0f} MWh/year |
+| **Annual Energy (P50)** | **{metrics['annual_p50_yield_mwh']:,.0f} MWh/year** |
+| Estimated P90 Energy | {metrics['annual_p90_yield_mwh']:,.0f} MWh/year |
 | Specific Yield | {metrics['specific_yield_kwh_kwp']:,.0f} kWh/kWp/year |
 {pvwatts_note}
 
@@ -347,11 +268,13 @@ def generate_report(metrics, output_dir):
 
 ## Civil Earthworks
 
-*Estimation computed using planar topological fit inside blocks, rigorously rejecting topography >1.5m cut depth.*
+*Estimation computed using topological best-fit 3D plane under each block polygon.*
 
 | Metric | Value |
 |--------|-------|
-| Cut/Fill Extrapolated Volume | {metrics['earthworks_volume_m3']:,.0f} m³ |
+| Total Cut Volume | {metrics['ew_cut_m3']:,.0f} m³ |
+| Total Fill Volume | {metrics['ew_fill_m3']:,.0f} m³ |
+| **Est. Grading Capex ($)** | **${metrics['ew_capex_usd']:,.0f} USD** |
 | High Topo Rejected Area | {metrics['earthworks_rejected_ha']} ha |
 
 ## Layout Components

@@ -1,7 +1,11 @@
 project:
   name: solar_layout
   output_crs: auto # Auto-detect UTM from site centroid
-  target_ac_mw: 51.2
+  target_ac_mw: null # User requested to fill the entire buildable area (maximize yield)
+  # Optional: Latitude and Longitude [lon, lat] for the Point of Interconnection (POI).
+  # If provided (e.g., [95.25, 19.98]), the substation will balance proximity to this point
+  # with terrain suitability, road access, and water avoidance.
+  poi: [95.259394, 19.986376]
 
 bess:
   capacity_mw: 10
@@ -138,9 +142,9 @@ block:
   ac_capacity_mw: 3.2
   dc_capacity_mw: 3.904
   footprint_ha: 2.5
-  # 2P portrait: strings per table in the E-W direction (4 strings × 18.24m = 72.96m row length).
-  # This only drives row geometry, not tessellation cell size (which uses footprint_ha).
-  strings_per_table: 4
+  # 2P portrait: strings per table in the E-W direction (2 strings × 18.24m = 36.48m row length).
+  # This enforces "Standard A" where 11 tables perfectly map to one 22-string SG320HX inverter.
+  strings_per_table: 2
   # Minimum fraction of target string count required to accept a block (industry: 60-70%)
   min_fill_fraction: 0.60
 
