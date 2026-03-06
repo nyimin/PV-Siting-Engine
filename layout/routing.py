@@ -217,7 +217,9 @@ def route_mv_cables(transformers_gdf, substation_point, roads_gdf, config, terra
     logger.info("Routing MV cables (along terrain-aware roads)...")
 
     if transformers_gdf is None or transformers_gdf.empty or substation_point is None:
-        return gpd.GeoDataFrame(columns=["geometry", "cable_type"], crs=config.get("project", {}).get("output_crs", "EPSG:3857"))
+        fallback_crs = (transformers_gdf.crs if transformers_gdf is not None and not transformers_gdf.empty
+                        else "EPSG:32646")
+        return gpd.GeoDataFrame(columns=["geometry", "cable_type"], crs=fallback_crs)
 
     crs = transformers_gdf.crs
     mv_features = []

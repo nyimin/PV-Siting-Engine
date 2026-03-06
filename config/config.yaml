@@ -132,9 +132,16 @@ solar:
 
 block:
   inverters_per_block: 10
+  # NOTE: ac_capacity_mw and dc_capacity_mw are now computed bottom-up at runtime
+  # from inverters × strings × modules × Wp. These values are kept for reference only.
   ac_capacity_mw: 3.2
   dc_capacity_mw: 3.904
   footprint_ha: 2.5
+  # 2P portrait: strings per table in the E-W direction (4 strings × 18.24m = 72.96m row length).
+  # This only drives row geometry, not tessellation cell size (which uses footprint_ha).
+  strings_per_table: 4
+  # Minimum fraction of target string count required to accept a block (industry: 60-70%)
+  min_fill_fraction: 0.60
 
 buffers:
   buildings_m: 30
