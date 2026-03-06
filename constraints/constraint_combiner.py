@@ -310,14 +310,18 @@ def combine_constraints(site_gdf, osm_exclusions, terrain_analysis_paths, config
     logger.info("Merging exclusion geometries...")
     combined_gdf = gpd.GeoDataFrame(pd.concat(all_exclusions, ignore_index=True), crs=site_crs)
 
+    # Clip to site boundary to prevent over-reporting area from rasters covering the bounding box
+    site_geom = site_gdf.geometry.union_all()
+    combined_gdf.geometry = combined_gdf.geometry.intersection(site_geom)
+    combined_gdf = combined_gdf[~combined_gdf.geometry.is_empty]
+
     # Dissolve by constraint type for reporting
     dissolved_exclusions = combined_gdf.dissolve(by="constraint_type").reset_index()
 
     # Unified blocking geometry
-    total_exclusion_geom = combined_gdf.geometry.unary_union
+    total_exclusion_geom = combined_gdf.geometry.union_all()
 
     logger.info("Subtracting exclusions from site boundary...")
-    site_geom = site_gdf.geometry.unary_union
     buildable_geom = site_geom.difference(total_exclusion_geom)
 
     # Explode multi-part polygons
