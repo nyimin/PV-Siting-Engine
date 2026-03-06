@@ -30,6 +30,7 @@ roads:
   main_collector_width_m: 6 # main spine road (sealed/gravel)
   maintenance_aisle_width_m: 4 # inter-block maintenance aisles
   max_gradient_pct: 5 # monsoon drainage and vehicle safety
+  grid_resolution_m: 15 # routing grid resolution
 
 mv_cables:
   # 33 kV AC Collection System (IEC 60502-2 / IEC 60287)
@@ -50,11 +51,68 @@ dem:
   download_retries: 3
   retry_delay_s: 5
 
+# ─────────────────────────────────────────────────────────────────────────────
+# TERRAIN ANALYSIS  (all slope thresholds in DEGREES — consistent with GIS SOP)
+# Slope classes (fixed-tilt PV, northern hemisphere, Myanmar):
+#   Class 1: 0–3°   → score 3  (flat / ideal)
+#   Class 2: 3–7°   → score 2  (gentle, some grading)
+#   Class 3: 7–12°  → score 1  (moderate, significant grading)
+#   Class 4: 12–15° → score 0  (unsuitable at screening stage)
+#   Class 5: >15°   → score 0  (hard exclusion, very steep)
+# ─────────────────────────────────────────────────────────────────────────────
 terrain:
-  max_slope_percent: 10
-  preferred_slope_percent: 5
-  excluded_slope_percent: 15
-  north_facing_penalty: true
+  # Slope thresholds (degrees)
+  slope_class1_max_deg: 3 # flat / ideal  → score 3
+  slope_class2_max_deg: 7 # gentle        → score 2
+  slope_class3_max_deg: 12 # moderate      → score 1
+  slope_class4_max_deg: 15 # steep         → score 0 (unsuitable)
+  max_slope_deg: 15 # hard exclusion — nothing above this is buildable
+  # North-facing slope exclusion (BD-01): N-facing pixels steeper than this are excluded
+  north_facing_exclusion_slope_deg: 5
+
+  # ── DEM Accuracy Improvements ──
+  # Sub-grid cubic resampling to create a smoother interpolated surface from 30m DEM
+  resample_resolution_m: 10.0
+  # Gaussian smoothing (sigma) to remove high-frequency radar noise (tree artefacts)
+  gaussian_smooth_sigma: 1.0
+
+  # TRI (Terrain Ruggedness Index) max for buildable terrain — metres
+  max_tri_m: 2.5 # >1.5 m average neighbour diff = rocky/rough, needs costly foundations
+
+  # TPI (Topographic Position Index) max depth for valley/ravine detection.
+  # Negative values represent valleys/channels. Areas more negative than this are excluded.
+  #
+  # --- TPI Adjustment Guide (risk vs. buildable area) ---
+  #   -1.0 to -1.5m : Conservative (Low CapEx / Low Risk)
+  #                   Excludes any noticeable swale. Results in fragmented layout
+  #                   but practically zero civil earthworks budget.
+  #   -2.0 to -2.5m : Balanced (Optimum / Mid Risk) <-- CURRENT SETTING
+  #                   Excludes established drainage corridors but allows grading
+  #                   over shallow rills. Balances panel area vs civil costs.
+  #   -3.5m         : Aggressive (High CapEx / High Risk)
+  #                   Only excludes unmistakable deep ravines. Maximizes MW area
+  #                   but requires massive concrete culverts and complex permitting.
+  max_tpi_valley_m: -3.5
+
+  # Profile curvature hard exclusion threshold (Zevenbergen-Thorne units)
+  max_curvature: 0.4
+
+  # ── Suitability index weighting (slope vs aspect) ──
+  # Index = slope_weight × S + aspect_weight × A  (both S, A on 0–3 scale)
+  # Available schemes documented in the Myanmar GIS SOP:
+  #   equal         0.50 / 0.50  — generic early screening
+  #   recommended   0.60 / 0.40  — project-level default (slope more important)
+  #   slope_strong  0.70 / 0.30  — conservative, steep terrain
+  #   slope_dominant 0.80 / 0.20 — grading cost critical
+  slope_weight: 0.60
+  aspect_weight: 0.40
+
+  # Minimum combined suitability index to classify terrain as buildable (0–3 scale)
+  # 2.25 ≈ good slope AND good aspect; 2.0 = slightly more inclusive
+  buildable_index_threshold: 2.25
+
+  # Legacy key kept for backward compatibility (not used in scoring, kept for reference)
+  aspect_penalty: true
 
 solar:
   module_power_w: 635
@@ -69,6 +127,8 @@ solar:
   row_pitch_m: 6.7
   dc_ac_ratio: 1.22
   gcr: 0.38
+  tracking: fixed
+  max_azimuth_deviation_deg: 15
 
 block:
   inverters_per_block: 10
@@ -82,6 +142,13 @@ buffers:
   rivers_m: 50
   railways_m: 50
   power_lines_m: 30
+  site_boundary_m: 10 # inward setback from project boundary (BD-03)
+  forest_buffer_m: 50 # shadow/edge buffer around tree cover exclusion (BD-06)
 
 lulc:
   excluded_classes: [10, 50, 70, 80, 90, 95]
+
+# Minimum contiguous buildable patch (ha) — fragments smaller than this are discarded
+# Industry standard: ~5 ha (one standard 3.2 MWac block footprint ≈ 2.5–4 ha)
+buildable_area:
+  min_patch_ha: 5.0

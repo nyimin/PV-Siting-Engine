@@ -1,55 +1,52 @@
 import json
 import logging
 import os
-import geopandas as gpd
-
-logger = logging.getLogger("PVLayoutEngine.outputs")
-import os
 import requests
 import geopandas as gpd
-from shapely.geometry import Point
 import numpy as np
+from shapely.geometry import Point
 
 logger = logging.getLogger("PVLayoutEngine.outputs")
 
 def _get_pvwatts_yield(lat, lon, dc_mw, config):
     """
-    Calls the NREL PVWatts V8 API to calculate Estimated Annual Energy Yield.
-    Requirements:
-    - PVWATTS_API_KEY inside config or ENV variables.
+    Calls the NREL PVWatts V8 API to calculate annual energy yield (MWh).
+    Falls back to a latitude-aware default if no API key is available.
+    Returns (annual_yield_mwh, used_api: bool)
     """
     api_key = os.getenv("PVWATTS_API_KEY")
     if not api_key:
         api_key = config.get("api", {}).get("pvwatts_key")
-        
+
     if not api_key or api_key == "DEMO_KEY":
-        logger.warning("No valid PVWatts API key found in ENV or config. Using default estimation.")
-        return dc_mw * 1600.0  # Approx 1600 MWh per MWdc
-        
+        logger.warning("No valid PVWatts API key — using default yield estimate (1600 kWh/kWp).")
+        return dc_mw * 1600.0, False
+
+    # Hemisphere-aware optimal azimuth (EC-03 fix)
+    azimuth = 180 if lat >= 0 else 0
+
     url = "https://developer.nrel.gov/api/pvwatts/v8.json"
-    
-    # Typical utility scale parameters
     params = {
         "api_key": api_key,
         "lat": lat,
         "lon": lon,
-        "system_capacity": dc_mw * 1000, # PVWatts takes kW
-        "azimuth": 180, # Assume south-facing Default
+        "system_capacity": dc_mw * 1000,
+        "azimuth": azimuth,
         "tilt": config.get("solar", {}).get("tilt_deg", 25),
-        "array_type": 1 if config.get("solar", {}).get("tracking", "fixed") != "fixed" else 0, # 0=fixed, 1=tracking
-        "module_type": 0, # Standard
+        "array_type": 1 if config.get("solar", {}).get("tracking", "fixed") != "fixed" else 0,
+        "module_type": 0,
         "losses": 14.07,
     }
-    
+
     try:
         response = requests.get(url, params=params, timeout=10)
         response.raise_for_status()
         data = response.json()
         annual_yield_kwh = data.get("outputs", {}).get("ac_annual", 0)
-        return annual_yield_kwh / 1000.0  # Return MWh
+        return annual_yield_kwh / 1000.0, True
     except Exception as e:
-        logger.error(f"PVWatts API Call failed: {e}")
-        return dc_mw * 1600.0
+        logger.error(f"PVWatts API call failed: {e}")
+        return dc_mw * 1600.0, False
 
 def _estimate_earthworks(blocks_gdf, terrain_paths):
     """
@@ -133,8 +130,8 @@ def compile_metrics(site_gdf, buildable_gdf, exclusions_gdf, blocks_gdf, rows_gd
     site_wgs84 = site_gdf.to_crs(epsg=4326)
     centroid = site_wgs84.geometry.unary_union.centroid
     lat, lon = centroid.y, centroid.x
-    
-    annual_yield_mwh = _get_pvwatts_yield(lat, lon, installed_dc_mw, config)
+
+    annual_yield_mwh, pvwatts_used_api = _get_pvwatts_yield(lat, lon, installed_dc_mw, config)
     earthworks_m3, ew_rejected_ha = _estimate_earthworks(blocks_gdf, terrain_paths)
 
     # Component counts
@@ -215,6 +212,7 @@ def compile_metrics(site_gdf, buildable_gdf, exclusions_gdf, blocks_gdf, rows_gd
         "om_warehouse_area_m2": om_warehouse_m2,
         "annual_yield_mwh": round(annual_yield_mwh, 2),
         "specific_yield_kwh_kwp": round((annual_yield_mwh * 1000) / (installed_dc_mw * 1000), 2) if installed_dc_mw > 0 else 0,
+        "pvwatts_used_api": pvwatts_used_api,
         "earthworks_volume_m3": round(earthworks_m3, 2),
         "earthworks_rejected_ha": round(ew_rejected_ha, 2),
 
@@ -231,14 +229,15 @@ def compile_metrics(site_gdf, buildable_gdf, exclusions_gdf, blocks_gdf, rows_gd
             breakdown[ctype] = round(area_ha, 2)
         metrics["exclusion_breakdown"] = breakdown
 
-    # Terrain stats
+    # Terrain stats (keys updated to degree-based nomenclature)
     if terrain_stats:
         metrics["terrain"] = {
-            "mean_slope_pct": round(terrain_stats.get("mean_slope", 0), 1),
-            "max_slope_pct": round(terrain_stats.get("max_slope", 0), 1),
-            "std_slope_pct": round(terrain_stats.get("std_slope", 0), 1),
-            "mean_tri_m": round(terrain_stats.get("mean_tri", 0), 2),
-            "mean_suitability": round(terrain_stats.get("mean_suitability", 0), 1),
+            "mean_slope_deg":  round(terrain_stats.get("mean_slope_deg", 0), 2),
+            "max_slope_deg":   round(terrain_stats.get("max_slope_deg", 0), 2),
+            "std_slope_deg":   round(terrain_stats.get("std_slope_deg", 0), 2),
+            "mean_tri_m":      round(terrain_stats.get("mean_tri_m", 0), 2),
+            "mean_suitability": round(terrain_stats.get("mean_suitability", 0), 2),
+            "buildable_pct_terrain": round(terrain_stats.get("buildable_pct_terrain", 0), 1),
         }
 
     return metrics
@@ -261,11 +260,12 @@ def generate_report(metrics, output_dir):
 
 | Metric | Value |
 |--------|-------|
-| Mean Slope | {t['mean_slope_pct']}% |
-| Max Slope | {t['max_slope_pct']}% |
-| Slope Std Dev | {t['std_slope_pct']}% |
+| Mean Slope | {t['mean_slope_deg']}° |
+| Max Slope | {t['max_slope_deg']}° |
+| Slope Std Dev | {t['std_slope_deg']}° |
 | Mean TRI | {t['mean_tri_m']} m |
-| Mean Suitability Score | {t['mean_suitability']} / 100 |
+| Mean Suitability Index | {t['mean_suitability']} / 3.0 |
+| Terrain Buildable (suitability ≥ 2.25) | {t.get('buildable_pct_terrain', 0)}% of raster |
 """
 
     # Exclusion breakdown
@@ -283,6 +283,12 @@ def generate_report(metrics, output_dir):
                 label = ctype.replace("osm_", "OSM: ").replace("terrain_", "Terrain: ").replace("lulc_", "LULC: ")
                 exclusion_section += f"| {label} | {area} |\n"
 
+        pvwatts_note = ("" if metrics.get("pvwatts_used_api")
+                    else "\n> ⚠️ **Yield estimate uses default 1 600 kWh/kWp (no PVWatts API key). "
+                         "Results may be ±30% from actual. Set PVWATTS_API_KEY in .env.**\n")
+    else:
+        pvwatts_note = ""
+
     content = f"""# Solar PV Conceptual Layout — Engineering Report
 
 ![Layout Map](layout_map.png)
@@ -296,10 +302,10 @@ def generate_report(metrics, output_dir):
 | Excluded Area | {metrics['excluded_area_ha']} ha |
 {exclusion_section}
 
-![Constraints Map](constraints_map.png)
+![Terrain Constraints Map](terrain_constraints_map.png)
 
 {terrain_section}
-![Slope Map](slope_map.png)
+![Terrain Slope Map](terrain_slope_map.png)
 
 ## Capacity Analysis
 
@@ -322,6 +328,7 @@ def generate_report(metrics, output_dir):
 | BESS Duration | {round(metrics['bess_capacity_mwh'] / metrics['bess_capacity_mw'], 1) if metrics['bess_capacity_mw'] > 0 else 'N/A'} hours |
 | Estimated Annual Yield | {metrics['annual_yield_mwh']:,.0f} MWh/year |
 | Specific Yield | {metrics['specific_yield_kwh_kwp']:,.0f} kWh/kWp/year |
+{pvwatts_note}
 
 ## O&M Facility
 

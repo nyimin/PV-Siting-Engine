@@ -39,7 +39,7 @@ def _validate_config(config):
     _check_positive(block, "footprint_ha", 0.5, 50)
 
     terrain = config["terrain"]
-    _check_positive(terrain, "max_slope_percent", 1, 30)
+    _check_positive(terrain, "max_slope_deg", 1, 45)
 
     logger.info("Configuration validated successfully.")
 

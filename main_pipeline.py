@@ -101,6 +101,12 @@ def run_pipeline(input_boundary_path, requested_mw, config_path="config/config.y
             output_crs = str(terrain_crs)
             if not osm_exclusions.empty:
                 osm_exclusions = osm_exclusions.to_crs(terrain_crs)
+
+        # Propagate site latitude into config so downstream modules
+        # (constraint_combiner aspect exclusion, block_generator pitch)
+        # have access to it without re-reading the DEM.
+        if "_site_latitude" not in config and terrain_paths.get("site_latitude") is not None:
+            config["_site_latitude"] = terrain_paths["site_latitude"]
     else:
         logger.warning("No DEM retrieved. Skipping terrain analysis constraints.")
 
@@ -229,7 +235,8 @@ def run_pipeline(input_boundary_path, requested_mw, config_path="config/config.y
 
     # Generate Terrain Maps
     if terrain_paths:
-        create_terrain_maps(terrain_paths, site_gdf, output_dir)
+        create_terrain_maps(terrain_paths, site_gdf, output_dir,
+                            exclusions_gdf=exclusions_gdf)
 
     metrics = compile_metrics(
         site_gdf, buildable_gdf, exclusions_gdf, blocks_gdf, rows_gdf,

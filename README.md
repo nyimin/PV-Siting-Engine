@@ -19,6 +19,7 @@ This engine transforms unrefined site boundaries into full conceptual engineerin
 
 - **Projected Metric Analysis:** Automatically detects and projects data to the appropriate local UTM zone for accurate metric calculations.
 - **Topographic Derivatives:** Generates Slope, Aspect, Curvature, Terrain Ruggedness Index (TRI), and Hillshade.
+- **Hydrology & TPI Exclusions:** Utilizes a Topographic Position Index (TPI) to detect deep valleys/channels without relying on OSM vector data. _Currently configured for an Aggressive (-3.5m) threshold to maximize buildable area at the cost of higher civil/earthworks CapEx._
 - **Solar Suitability Scoring:** Produces a 0–100 spatial score raster weighting slope thresholds, TRI, and hemisphere-aware north-facing penalties.
 
 ### 🏗️ Solar Layout & BOP Siting
