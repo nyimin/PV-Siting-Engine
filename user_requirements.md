@@ -44,7 +44,3 @@ The layout engine is currently aligned with these physical parameters, but they 
 - **Collection Voltage:** 33 kV
 - **Transmission Voltage:** 66 kV (Myinsai steps up 33 kV to 66 kV to transmit to Letpantaw hub).
 - **Infrastructure needed:** Substation must accommodate the 16 incoming 33kV PV block feeders and the BESS feeder, plus the step-up transformer to 66 kV.
-
----
-
-**Implementation Rule for Engine:** The `main_pipeline.py` or `block_generator.py` must be modified to accept a `target_blocks = 16` or `target_ac_mw = 51.2` parameter. Once 16 blocks are successfully clustered and placed in the optimal (e.g., flattest, easiest to route) buildable areas, block generation must halt, leaving the rest of the site empty.

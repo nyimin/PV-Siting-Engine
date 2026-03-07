@@ -297,9 +297,8 @@ def route_access_roads(blocks_gdf, substation_point, config, terrain_paths=None,
                        transformers_gdf=None, corridor_info=None):
     """
     Generates hierarchical access roads.
-    When corridor_info is provided (Phase 3+), uses the pre-planned spine and
-    branch lines as road centrelines. Otherwise falls back to a simple straight
-    line from substation to site centroid.
+    When corridor_info is provided, uses the pre-planned spine and
+    branch lines as primary/secondary collector roads.
     """
     logger.info("Routing hierarchical access roads...")
 
@@ -330,7 +329,7 @@ def route_access_roads(blocks_gdf, substation_point, config, terrain_paths=None,
         combined_road_network = spine_geom
         branch_corridor_lines = []
 
-    # 2. Build occupancy grid over all blocks (with gradient enforcement)
+    # Optional Occupancy grid
     slope_path = terrain_paths.get("slope") if terrain_paths else None
     max_gradient_pct = config.get("roads", {}).get("max_gradient_pct", 5)
     grid = OccupancyGrid(
@@ -368,7 +367,36 @@ def route_access_roads(blocks_gdf, substation_point, config, terrain_paths=None,
         else:
             target_pt = Point(substation_point.x, substation_point.y)
 
-        branch_line = grid.astar(origin_pt, target_pt)
+        # Branch Road Routing Strategy
+        # A* Grid Search from transformer to nearest branch corridor
+        # Start and end snap handling
+        try:
+            start_x_idx, start_y_idx = grid.get_grid_indices(origin_pt)
+            end_x_idx,   end_y_idx   = grid.get_grid_indices(target_pt)
+            
+            # Use A* to find path
+            path_indices = _astar(grid, start_x_idx, start_y_idx, end_x_idx, end_y_idx)
+            if not path_indices:
+                raise ValueError("A* could not find a path")
+                
+            # Convert grid indices back to real-world coordinates
+            coords = [(grid.minx + i * grid.cell_size + grid.cell_size/2,
+                       grid.miny + j * grid.cell_size + grid.cell_size/2) 
+                      for (i, j) in path_indices]
+            
+            # Force exact connections to avoid graph disconnections
+            if len(coords) > 1:
+                coords[0] = (origin_pt.x, origin_pt.y)
+                coords[-1] = (target_pt.x, target_pt.y)
+            else:
+                coords = [(origin_pt.x, origin_pt.y), (target_pt.x, target_pt.y)]
+            
+            # Simplify path to remove unnecessary vertices
+            branch_line = LineString(coords).simplify(2.0, preserve_topology=True)
+            
+        except Exception as e:
+            logger.debug(f"A* routing failed for block {b_id}: {e}. Falling back to straight line.")
+            branch_line = LineString([(origin_pt.x, origin_pt.y), (target_pt.x, target_pt.y)])
 
         road_features.append({
             "geometry":  branch_line,
@@ -430,33 +458,45 @@ def _build_road_graph(roads_gdf, substation_point, tolerance=2.0):
                 round(y / tolerance) * tolerance)
 
     edge_id = 0
-    for _, row in roads_gdf.iterrows():
-        geom = row.geometry
-        if geom is None or geom.is_empty:
+    
+    # Task 5.1: Geometrically snap and merge all roads to fix floating point topological gaps
+    try:
+        from shapely.ops import unary_union, snap
+        from shapely.geometry import MultiLineString
+        
+        valid_lines = [geom for geom in roads_gdf.geometry if geom is not None and not geom.is_empty]
+        mls = MultiLineString(valid_lines)
+        snapped_mls = snap(mls, mls, 2.0)
+        merged_geom = unary_union(snapped_mls)
+    except Exception as e:
+        logger.warning(f"Failed to cleanly intersect road graph geometries: {e}")
+        merged_geom = roads_gdf.geometry.union_all()
+
+    if merged_geom.geom_type == "LineString":
+        lines = [merged_geom]
+    elif merged_geom.geom_type == "MultiLineString":
+        lines = list(merged_geom.geoms)
+    else:
+        lines = []
+
+    for line in lines:
+        coords = list(line.coords)
+        if len(coords) < 2:
             continue
-        # Handle both LineString and MultiLineString
-        lines = [geom] if geom.geom_type == "LineString" else list(geom.geoms)
-        for line in lines:
-            coords = list(line.coords)
-            if len(coords) < 2:
-                continue
-            # Discretise at ~50m intervals for better connectivity
-            total_len = line.length
-            n_segments = max(1, int(total_len / 50))
-            prev_node = _snap_coord(coords[0][0], coords[0][1])
+            
+        # Add edges for every segment of the split line
+        for i in range(len(coords) - 1):
+            prev_node = _snap_coord(coords[i][0], coords[i][1])
+            cur_node = _snap_coord(coords[i+1][0], coords[i+1][1])
+            seg_len = math.hypot(cur_node[0] - prev_node[0],
+                                 cur_node[1] - prev_node[1])
+            
             G.add_node(prev_node, x=prev_node[0], y=prev_node[1])
-            for seg_i in range(1, n_segments + 1):
-                frac = seg_i / n_segments
-                pt = line.interpolate(frac, normalized=True)
-                cur_node = _snap_coord(pt.x, pt.y)
-                G.add_node(cur_node, x=cur_node[0], y=cur_node[1])
-                seg_len = math.hypot(cur_node[0] - prev_node[0],
-                                     cur_node[1] - prev_node[1])
-                if seg_len > 0 and prev_node != cur_node:
-                    G.add_edge(prev_node, cur_node, weight=seg_len,
-                               edge_id=edge_id)
-                    edge_id += 1
-                prev_node = cur_node
+            G.add_node(cur_node, x=cur_node[0], y=cur_node[1])
+            
+            if seg_len > 0 and prev_node != cur_node:
+                G.add_edge(prev_node, cur_node, weight=seg_len, edge_id=edge_id)
+                edge_id += 1
 
     # Add substation as a node, connect to nearest road node
     sub_snap = _snap_coord(substation_point.x, substation_point.y)
@@ -680,31 +720,65 @@ def route_mv_cables(transformers_gdf, substation_point, roads_gdf, blocks_gdf,
         for _, brow in blocks_gdf.iterrows():
             block_capacity[brow.get("block_id", "")] = brow.get("capacity_ac_mw", 0)
 
-    # ── Route each transformer to substation ──
+    # ── Route each transformer (Daisy-Chain Topology) ──
+    # Group transformers by feeder
+    feeders = {}
     for idx, row in transformers_gdf.iterrows():
-        trans_pt = Point(row.geometry.x, row.geometry.y)
-        tid = row.get("transformer_id", f"T{idx}")
-        feeder_id = feeder_assignments.get(idx, "FEEDER_01")
-        block_id = row.get("block_id", "")
+        fid = feeder_assignments.get(idx, "FEEDER_01")
+        if fid not in feeders:
+            feeders[fid] = []
+        feeders[fid].append((idx, row))
+        
+    def _get_nearest_node(graph, pt):
+        if graph.number_of_nodes() == 0: return None
+        best_node = None
+        best_dist = float("inf")
+        for n in graph.nodes:
+            d = math.hypot(n[0] - pt.x, n[1] - pt.y)
+            if d < best_dist:
+                best_dist = d
+                best_node = n
+        return best_node
 
-        # Task 5.1: Route along road graph
-        if G.number_of_edges() > 0 and sub_node is not None:
-            full_route = _route_on_road_graph(G, None, sub_node, trans_pt, sub_pt)
-        elif grid is not None:
-            full_route = grid.astar(trans_pt, sub_pt)
-        else:
-            full_route = LineString([(trans_pt.x, trans_pt.y), (sub_pt.x, sub_pt.y)])
-
-        mv_features.append({
-            "geometry":       full_route,
-            "cable_type":     "MV_33kV",
-            "feeder_id":      feeder_id,
-            "transformer_id": tid,
-            "block_id":       block_id,
-            "voltage_kv":     voltage_kv,
-            "topology":       "radial_road_following",
-            "length_m":       round(full_route.length, 1),
-        })
+    for fid, group in feeders.items():
+        # Task 6.2: To prevent zigzagging, sort transformers by their coordinate alignment.
+        # Since transformers are snapped to E-W aligned Maintenance Aisles, we sort primarily by 
+        # X coordinate (corridor sequence) and secondarily by Y coordinate.
+        group.sort(key=lambda item: (round(item[1].geometry.x / 10), item[1].geometry.y))
+        for i in range(len(group)):
+            idx, row = group[i]
+            trans_pt = Point(row.geometry.x, row.geometry.y)
+            tid = row.get("transformer_id", f"T{idx}")
+            block_id = row.get("block_id", "")
+            
+            if i == 0:
+                # Closest to substation, route directly
+                target_node = sub_node
+                target_pt = sub_pt
+            else:
+                # Route to the downstream (closer to sub) transformer in the daisy chain
+                prev_idx, prev_row = group[i-1]
+                target_pt = Point(prev_row.geometry.x, prev_row.geometry.y)
+                target_node = _get_nearest_node(G, target_pt) if G.number_of_edges() > 0 else None
+            
+            # Task 5.1: Route along road graph
+            if G.number_of_edges() > 0 and target_node is not None:
+                full_route = _route_on_road_graph(G, None, target_node, trans_pt, target_pt)
+            elif grid is not None:
+                full_route = grid.astar(trans_pt, target_pt)
+            else:
+                full_route = LineString([(trans_pt.x, trans_pt.y), (target_pt.x, target_pt.y)])
+            
+            mv_features.append({
+                "geometry":       full_route,
+                "cable_type":     "MV_33kV",
+                "feeder_id":      fid,
+                "transformer_id": tid,
+                "block_id":       block_id,
+                "voltage_kv":     voltage_kv,
+                "topology":       "radial_daisy_chain",
+                "length_m":       round(full_route.length, 1),
+            })
 
     mv_cables_gdf = gpd.GeoDataFrame(mv_features, crs=crs)
 
@@ -721,8 +795,8 @@ def route_mv_cables(transformers_gdf, substation_point, roads_gdf, blocks_gdf,
             # Fallback: estimate from transformer count
             feeder_load_mw = len(feeder_cables) * 0.55  # ~0.55 MWac typical per block
 
-        # Trunk length = longest cable in feeder (conservative — represents farthest block)
-        trunk_length_km = feeder_cables["length_m"].max() / 1000
+        # Trunk length = sum of segments in daisy chain (represents distance to farthest block)
+        trunk_length_km = feeder_cables["length_m"].sum() / 1000
 
         cable_size, vd_pct, rated_current = _select_cable_and_vdrop(
             feeder_load_mw, trunk_length_km, voltage_kv, pf
@@ -781,7 +855,7 @@ def route_mv_cables_and_roads(inverters_gdf, transformers_gdf, substation_point,
         exclusions_gdf=exclusions_gdf,
         buildable_area_gdf=buildable_area_gdf,
         transformers_gdf=transformers_gdf,
-        corridor_info=corridor_info,
+        corridor_info=corridor_info
     )
     mv_cables_gdf = route_mv_cables(
         transformers_gdf, substation_point, roads_gdf, blocks_gdf, config,

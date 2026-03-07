@@ -193,7 +193,7 @@ def run_pipeline(input_boundary_path, requested_mw, config_path="config/config.y
     logger.info("  PHASE 6: LAYOUT GENERATION")
     logger.info("=" * 50)
 
-    blocks_gdf, rows_gdf = generate_solar_blocks(corridor_reduced_gdf, config, terrain_paths)
+    blocks_gdf, rows_gdf, _ = generate_solar_blocks(corridor_reduced_gdf, config, terrain_paths)
 
     # ── Post-generation BOP guard: drop any PV rows whose centroid falls inside
     #    the BOP zone. The block generator works at polygon level and edge rows
@@ -207,10 +207,10 @@ def run_pipeline(input_boundary_path, requested_mw, config_path="config/config.y
             list(guard_gdf.geometry)
         )
         before = len(rows_gdf)
-        rows_gdf = rows_gdf[~rows_gdf.geometry.centroid.intersects(bop_union)].copy()
+        rows_gdf = rows_gdf[~rows_gdf.geometry.intersects(bop_union)].copy()
         removed = before - len(rows_gdf)
         if removed > 0:
-            logger.info(f"  Removed {removed} PV rows that overlapped BOP zone.")
+            logger.info(f"  Removed {removed} PV rows that geometrically overlapped BOP zone.")
             # Also purge orphaned blocks (blocks with no rows left)
             valid_blocks = set(rows_gdf["block_id"].unique())
             blocks_gdf = blocks_gdf[blocks_gdf["block_id"].isin(valid_blocks)].copy()
@@ -223,7 +223,10 @@ def run_pipeline(input_boundary_path, requested_mw, config_path="config/config.y
     logger.info("  PHASE 7: BALANCE OF PLANT EQUIPMENT")
     logger.info("=" * 50)
 
-    inverters_gdf, transformers_gdf = place_inverters_and_transformers(blocks_gdf, rows_gdf, config, sub_pt)
+    inverters_gdf, transformers_gdf = place_inverters_and_transformers(
+        blocks_gdf, rows_gdf, config, sub_pt, 
+        corridor_info=corridor_info
+    )
     lv_cables_gdf = None  # LV cabling removed in Phase 1 stabilisation — placeholder had no engineering value
 
     roads_gdf, mv_cables_gdf = route_mv_cables_and_roads(

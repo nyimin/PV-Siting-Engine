@@ -4,17 +4,18 @@ import geopandas as gpd
 import numpy as np
 from shapely.geometry import Point, LineString
 from shapely.affinity import rotate, translate
+from shapely.ops import unary_union, nearest_points
 
 logger = logging.getLogger("PVLayoutEngine.bop")
 
 
-def place_inverters_and_transformers(blocks_gdf, rows_gdf, config, sub_pt):
+def place_inverters_and_transformers(blocks_gdf, rows_gdf, config, sub_pt, corridor_info=None):
     """
     Places inverters and block transformers based on real solar block architecture.
     Strictly matches generated strings to inverters and clusters them on a "Border Pad"
-    nearest to the substation.
+    nearest to the road network (or substation if roads are unavailable).
     """
-    logger.info("Placing inverters and transformers (block architecture)...")
+    logger.info("Placing inverters and transformers (Virtual Central block architecture)...")
 
     solar_cfg = config["solar"]
     block_cfg = config["block"]
@@ -24,13 +25,22 @@ def place_inverters_and_transformers(blocks_gdf, rows_gdf, config, sub_pt):
     mods_per_string = solar_cfg["modules_per_string"]      # 28
     mod_power_w = solar_cfg["module_power_w"]              # 635 W
 
+    # Assemble possible snap targets (road corridors)
+    corridor_lines = []
+    if corridor_info:
+        if "spine_line" in corridor_info and corridor_info["spine_line"]:
+            corridor_lines.append(corridor_info["spine_line"])
+        if "branch_lines" in corridor_info and corridor_info["branch_lines"]:
+            corridor_lines.extend(corridor_info["branch_lines"])
+            
+    combined_corridors = unary_union(corridor_lines) if corridor_lines else None
+
     inverters = []
     transformers = []
 
     for idx, block_row in blocks_gdf.iterrows():
         block_id = block_row["block_id"]
         block_geom = block_row.geometry
-        block_angle = block_row.get("angle_deg", 0)
 
         # Get actual generated strings from rows_gdf
         if rows_gdf is not None and not rows_gdf.empty:
@@ -45,36 +55,24 @@ def place_inverters_and_transformers(blocks_gdf, rows_gdf, config, sub_pt):
 
         n_inverters = math.ceil(total_strings / strings_per_inv)
 
-        # Find the block edge closest to the Substation (as a proxy for the road access)
-        # We snap to the hull boundary nearest the substation to create a "Border Pad"
-        from shapely.ops import nearest_points
-        
-        # We want the boundary of the block, not the filled polygon, so we can snap to the edge.
-        block_boundary = block_geom.boundary
-        
-        # nearest_points returns a tuple (point_on_boundary, point_on_sub_pt)
-        # We want the point on the block boundary
-        pcu_pad_center = nearest_points(block_boundary, sub_pt)[0]
+        # Edge-based Transformer Placement
+        # Snap directly to the external road corridors bordering the paddock/block
+        pcu_pad_center = None
+        if combined_corridors is not None:
+            # Find the closest point on the corridor network to the block boundary
+            pcu_pad_center, _ = nearest_points(block_geom, combined_corridors)
+        else:
+            # Fallback to the substation point
+            pcu_pad_center, _ = nearest_points(block_geom, sub_pt)
         
         # Place inverters around the pad rather than a mathematical grid
         strings_remainder = total_strings
-        
-        if rows_gdf is not None and not rows_gdf.empty:
-            block_rows = rows_gdf[rows_gdf["block_id"] == block_id]
-        else:
-            block_rows = gpd.GeoDataFrame()
             
         for i in range(n_inverters):
-            # Cluster tightly around the Border Pad for the Virtual Central approach
-            # Offset each inverter slightly for visualization purposes
+            # Cluster tightly around the Central Skid
             offset_x = (i - (n_inverters / 2)) * 1.5  # 1.5m spacing between inverters on the pad
-            inv_point = Point(pcu_pad_center.x + offset_x, pcu_pad_center.y - 3.0) # 3m south of the transformer
+            inv_point = Point(pcu_pad_center.x + offset_x, pcu_pad_center.y - 3.0) # slightly offset from transformer
             
-            # Ensure it falls within block hull (fallback if centroid is weird)
-            if not block_geom.contains(inv_point):
-                from shapely.ops import nearest_points
-                inv_point = nearest_points(block_geom, inv_point)[0]
-
             # Assign valid strings evenly, last inverter might have fewer
             allocated_strings = min(strings_per_inv, strings_remainder)
             strings_remainder -= allocated_strings
@@ -128,3 +126,4 @@ def place_inverters_and_transformers(blocks_gdf, rows_gdf, config, sub_pt):
     logger.info(f"  Total DC capacity: {total_modules * mod_power_w / 1e6:.2f} MW")
 
     return inverters_gdf, transformers_gdf
+

@@ -70,13 +70,93 @@ def _long_axis_direction(buildable_geom):
     return angle_deg, (ux, uy)
 
 
+import math
+import numpy as np
+
+class AStarTerrainGrid:
+    """Terrain-aware pathfinder that strictly restricts routing to the buildable area."""
+    def __init__(self, buildable_geom, cell_size_m=10):
+        minx, miny, maxx, maxy = buildable_geom.bounds
+        self.ox = minx - cell_size_m*2
+        self.oy = miny - cell_size_m*2
+        self.cs = cell_size_m
+        self.ncols = int(math.ceil((maxx + cell_size_m*2 - self.ox) / cell_size_m)) + 1
+        self.nrows = int(math.ceil((maxy + cell_size_m*2 - self.oy) / cell_size_m)) + 1
+        
+        import rasterio.features
+        from rasterio.transform import from_origin
+        
+        transform = from_origin(self.ox, maxy + cell_size_m*2, self.cs, self.cs)
+        try:
+            geom_list = list(buildable_geom.geoms) if hasattr(buildable_geom, 'geoms') else [buildable_geom]
+            shapes = [(geom, 1) for geom in geom_list]
+        except Exception:
+            shapes = [(buildable_geom, 1)]
+            
+        buildable_mask = rasterio.features.rasterize(
+            shapes,
+            out_shape=(self.nrows, self.ncols),
+            transform=transform,
+            fill=0,
+            dtype='uint8'
+        )
+        buildable_mask = np.flipud(buildable_mask)
+        self.obstacle = (buildable_mask == 0)
+
+    def world_to_cell(self, x, y):
+        c = int((x - self.ox) / self.cs)
+        r = int((y - self.oy) / self.cs)
+        return max(0, min(self.ncols - 1, c)), max(0, min(self.nrows - 1, r))
+
+    def cell_to_world(self, r, c):
+        return self.ox + (c + 0.5) * self.cs, self.oy + (r + 0.5) * self.cs
+
+    def astar(self, src_pt, dst_pt):
+        sc, sr = self.world_to_cell(src_pt.x, src_pt.y)
+        dc, dr = self.world_to_cell(dst_pt.x, dst_pt.y)
+
+        # Clear a 60m radius around start and end points to escape BOP holes
+        import math
+        for r in range(max(0, sr-6), min(self.nrows, sr+7)):
+            for c in range(max(0, sc-6), min(self.ncols, sc+7)):
+                cx, cy = self.cell_to_world(r, c)
+                if math.hypot(cx - src_pt.x, cy - src_pt.y) < 60:
+                    self.obstacle[r, c] = False
+                    
+        for r in range(max(0, dr-6), min(self.nrows, dr+7)):
+            for c in range(max(0, dc-6), min(self.ncols, dc+7)):
+                cx, cy = self.cell_to_world(r, c)
+                if math.hypot(cx - dst_pt.x, cy - dst_pt.y) < 60:
+                    self.obstacle[r, c] = False
+        
+        try:
+            import skimage.graph
+            # Free space = 1.0 cost, Obstacle = 1e9 cost
+            costs = np.where(self.obstacle, 1e9, 1.0).astype(np.float32)
+            mcp = skimage.graph.MCP_Geometric(costs)
+            
+            costs_to_target, traceback = mcp.find_costs(starts=[(sr, sc)], ends=[(dr, dc)])
+            if costs_to_target[dr, dc] >= 1e8:
+                return None  # No valid path found through free space
+                
+            path_indices = mcp.traceback((dr, dc))
+            
+            coords = [self.cell_to_world(r, c) for r, c in path_indices]
+            coords[0] = (src_pt.x, src_pt.y)
+            coords[-1] = (dst_pt.x, dst_pt.y)
+            
+            return LineString(coords).simplify(5.0, preserve_topology=True)
+        except Exception as e:
+            logger.warning(f"  AStarTerrainGrid routing failed: {e}")
+            return None
+
 def _extend_line_to_boundary(start_pt, direction, buildable_geom, max_extend=5000):
     """Extend a ray from start_pt in +direction and -direction
-    until it exits the buildable geometry. Returns a LineString clipped to boundary.
+    and perfectly clip it to the true buildable_geom (never crossing exclusions).
+    Returns a single continuous LineString originating at start_pt.
     """
     ux, uy = direction
 
-    # Create a very long line through the start point
     far_fwd = Point(start_pt.x + ux * max_extend, start_pt.y + uy * max_extend)
     far_bwd = Point(start_pt.x - ux * max_extend, start_pt.y - uy * max_extend)
     long_line = LineString([
@@ -85,24 +165,28 @@ def _extend_line_to_boundary(start_pt, direction, buildable_geom, max_extend=500
         (far_fwd.x, far_fwd.y),
     ])
 
-    # Clip to buildable boundary
     clipped = long_line.intersection(buildable_geom)
+    
     if clipped.is_empty:
         return None
+        
+    def _get_connected_segment(multi_line, origin):
+        if multi_line.geom_type == "LineString":
+            return multi_line
+        if multi_line.is_empty:
+            return None
+        best_seg = None
+        min_dist = float("inf")
+        for geom in multi_line.geoms:
+            dist = geom.distance(origin)
+            if dist < min_dist:
+                min_dist = dist
+                best_seg = geom
+        if min_dist < 1.0:
+            return best_seg
+        return None
 
-    # If intersection produces multiple segments, take the longest one
-    # that passes through/near the start point
-    if clipped.geom_type == "MultiLineString":
-        best = None
-        best_dist = float("inf")
-        for seg in clipped.geoms:
-            d = seg.distance(start_pt)
-            if d < best_dist:
-                best_dist = d
-                best = seg
-        clipped = best if best else clipped.geoms[0]
-
-    return clipped
+    return _get_connected_segment(clipped, start_pt)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -146,26 +230,43 @@ def plan_corridors(buildable_area_gdf, substation_point, config):
     crs = buildable_area_gdf.crs
 
     # ── Task 3.1: Main collector corridor ──
-    # Straight line from substation along the long axis of buildable area.
+    logger.info("  Generating terrain-aware spine road...")
+    
+    # Calculate the overall long axis (needed for downstream orientation)
     angle_deg, (ux, uy) = _long_axis_direction(buildable_geom)
-    logger.info(f"  Buildable area long axis: {angle_deg:.1f}° from north")
+    
+    # 1. Find the furthest point in the buildable area from the substation
+    import math
+    pts = []
+    if buildable_geom.geom_type == 'Polygon':
+        pts = list(buildable_geom.exterior.coords)
+    elif hasattr(buildable_geom, 'geoms'):
+        for g in buildable_geom.geoms:
+            if hasattr(g, 'exterior'):
+                pts.extend(list(g.exterior.coords))
+                
+    best_pt = None
+    best_d = -1
+    for coord in pts:
+        d = math.hypot(coord[0]-substation_point.x, coord[1]-substation_point.y)
+        if d > best_d:
+            best_d = d
+            best_pt = Point(coord)
 
-    # Decide which direction along the long axis to extend:
-    # pick the direction that goes away from substation toward the far end
-    centroid = buildable_geom.centroid
-    dot_test = (centroid.x - substation_point.x) * ux + \
-               (centroid.y - substation_point.y) * uy
-    if dot_test < 0:
-        ux, uy = -ux, -uy  # flip to point toward buildable centre
+    spine_line = None
+    if best_pt:
+        try:
+            grid = AStarTerrainGrid(buildable_geom, cell_size_m=10)
+            spine_line = grid.astar(substation_point, best_pt)
+        except Exception as e:
+            logger.warning(f"  AStar terrain routing failed: {e}")
 
-    spine_line = _extend_line_to_boundary(substation_point, (ux, uy), buildable_geom)
-
+    # Fallback to straight line axis
     if spine_line is None or spine_line.is_empty:
-        logger.warning("  Could not generate main collector corridor — falling back to centroid line")
-        spine_line = LineString([
-            (substation_point.x, substation_point.y),
-            (centroid.x, centroid.y),
-        ])
+        centroid = buildable_geom.centroid
+        if (centroid.x - substation_point.x) * ux + (centroid.y - substation_point.y) * uy < 0:
+            ux, uy = -ux, -uy
+        spine_line = _extend_line_to_boundary(substation_point, (ux, uy), buildable_geom)
 
     spine_length = spine_line.length
     logger.info(f"  Main collector: {spine_length:.0f}m, "
@@ -192,9 +293,6 @@ def plan_corridors(buildable_area_gdf, substation_point, config):
         # (each branch serves ~2 blocks on each side)
         branch_spacing = max(100, min(250, spine_length / 8))
 
-    # Perpendicular direction
-    px, py = -uy, ux
-
     branch_lines = []
     branch_corridors = []
 
@@ -205,9 +303,21 @@ def plan_corridors(buildable_area_gdf, substation_point, config):
         if dist_along >= spine_length - branch_spacing / 4:
             break
 
-        # Point on spine at this distance
         try:
             branch_origin = spine_line.interpolate(dist_along)
+            
+            # Calculate local tangent to ensure branches are perfectly perpendicular to the curving spine
+            delta = 1.0
+            pt1 = spine_line.interpolate(max(0, dist_along - delta))
+            pt2 = spine_line.interpolate(min(spine_length, dist_along + delta))
+            dx = pt2.x - pt1.x
+            dy = pt2.y - pt1.y
+            length = math.hypot(dx, dy)
+            if length == 0:
+                continue
+            ux, uy = dx/length, dy/length
+            px, py = -uy, ux  # Local perpendicular
+            
         except Exception:
             continue
 
@@ -251,11 +361,14 @@ def plan_corridors(buildable_area_gdf, substation_point, config):
 
     corridor_gdf = gpd.GeoDataFrame(corridor_records, crs=crs)
 
+    # Subtract corridors from buildable area
+    corridor_union = corridor_gdf.geometry.union_all().buffer(0)
+    
     total_corridor_ha = corridor_union.area / 10000
     logger.info(f"  Total corridor area: {total_corridor_ha:.2f} ha")
 
     # ── Task 3.3: Subtract corridors from buildable area ──
-    reduced_geom = buildable_geom.difference(corridor_union)
+    reduced_geom = buildable_geom.difference(corridor_union).buffer(0)
 
     if reduced_geom.is_empty:
         logger.warning("  Corridors consumed entire buildable area — "

@@ -141,11 +141,57 @@ Phase 1→2→3→4 (unchanged) → Phase 5: BOP → Phase 5.5: Corridors → Ph
 - Capacity increased by ~15% (38.4 MWac) compared to rigid baseline.
 - `engineering_report.md` now outputs full financial breakdown ($/Wdc).
 
+### Phase 6 - Final Alignment (BOP & Routing) COMPLETE ✅
+
+| Task                                 | Change                                                                                                                                | Files                                            |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| 6.1 Balance of Plant (BOP) Siting    | Virtual Central Skids now strictly snap to the exterior edge (hull) intersecting the primary access route instead of the centroid.    | `layout/bop_placement.py`, `analyze_layout.py`   |
+| 6.2 Internal Road Alignment          | Branch roads seamlessly ingest and follow the `maintenance_aisle` geometries carved out during 2D Block Generation.                   | `layout/block_generator.py`, `layout/routing.py` |
+| 6.3 Daisy-chain MV Routing Alignment | MV radial feeder sequences are physically sorted into neat coordinates along the exact same `maintenance_aisle` grid, avoiding loops. | `layout/routing.py`, `main_pipeline.py`          |
+
+**Key changes:**
+
+- Skids sit precisely 145m completely outside the inner centroid bounds directly adjacent to O&M corridors.
+- Branch Roads are straight runs exactly bisecting or aligning alongside columns.
+- The A\* search fallback has been replaced entirely with deterministic geometric line-snapping to the layout-generated corridors.
+
+---
+
+### Phase 7 — Myinsai Scope & Requirements Alignment COMPLETE ✅
+
+| Task                           | Change                                                                                                                                                                | Files                       |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------- |
+| 7.1 Target Capacity Constraint | Enforced an absolute layout limit of 16 contiguous blocks (51.2 MWac) by scoring and retaining only the flattest terrain clusters closest to the substation.          | `layout/block_generator.py` |
+| 7.2 Internal Access Roads      | Carved out a 6m-wide "canyon" directly through the centroid of all 3.2 MWac blocks, splitting the modules to allow for internal vehicle access.                       | `layout/block_generator.py` |
+| 7.3 Virtual Central Skids      | Positioned the Block Transformer and exactly 10 clustered String Inverters squarely inside the new internal access road, fulfilling standard commercial array design. | `layout/bop_placement.py`   |
+| 7.4 Homerun MV Feeders         | Updated the electrical topology to strictly enforce 1 block = 1 feeder homerun routing (16 independent 33kV loops terminating directly at the substation).            | `config/config.yaml`        |
+
+**Key changes:**
+
+- The pipeline no longer blindly maximizes capacity across the buildable area. It strictly generates the 16 best commercial utility blocks to match the target 51.2 MWac.
+- The map visuals (`layout_map.html`) strictly enforce 1-to-1 independent feeder plotting with zero daisy-chaining.
+- The modules within the block are split by an explicit intra-block road.
+
+---
+
+### Phase 8 — Post-Audit Alignment & Routing Polish COMPLETE ✅
+
+| Task                             | Change                                                                                                                                                                                                                          | Files                        |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
+| 8.1 Terrain-Aware A\* Spine Road | Reverted the rigidly straight-line mathematical road approximation to a terrain-aware A\* pathfinding algorithm (`AStarTerrainGrid` on a 10m grid) strictly bound within valid buildable area logic.                            | `layout/corridor_planner.py` |
+| 8.2 Daisy-Chain MV Cabling       | Transitioned MV cable paths from complex radial star networks to commercial daisy-chain topologies directly navigating along the established road graph.                                                                        | `layout/routing.py`          |
+| 8.3 Exact Paddock Clipping       | The clustering algorithm mathematically leaked across road corridors due to a naive `convex_hull`. The block envelopes are now strictly intersected with their parent `paddock_geom` to physically prevent road/panel overlaps. | `layout/block_generator.py`  |
+
+**Key changes:**
+
+- Eradicated mathematical overlaps between the primary access road network, underground MV cables, and established PV blocks/arrays.
+- Restored visual fidelity conforming to standard commercial utility practices.
+
 ---
 
 ## 4. Remaining Phases
 
-_(All 6 roadmap phases are now fully implemented. Features 6.4 multi-objective and Phase 7 LV routing are stretch targets for future versions)._
+_(All roadmap phases and explicit Myinsai user alignments are now fully implemented. Feature 6.4 multi-objective runs are stretch targets for future versions)._
 
 ---
 

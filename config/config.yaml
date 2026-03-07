@@ -1,7 +1,7 @@
 project:
   name: solar_layout
   output_crs: auto # Auto-detect UTM from site centroid
-  target_ac_mw: null # User requested to fill the entire buildable area (maximize yield)
+  target_ac_mw: 51.2 # User requested to limit the layout to exactly 51.2 MWac (16 blocks)
   # Optional: Latitude and Longitude [lon, lat] for the Point of Interconnection (POI).
   # If provided (e.g., [95.25, 19.98]), the substation will balance proximity to this point
   # with terrain suitability, road access, and water avoidance.
@@ -54,11 +54,11 @@ roads:
 
 mv_cables:
   # 33 kV AC Collection System (IEC 60502-2 / IEC 60287)
-  topology: homerun # one dedicated circuit per block to substation
+  topology: radial # daisy-chained circuits
   voltage_kv: 33
   routing: alongside_roads # trench beside road corridors, not cross-country
   trench_depth_m: 1.2 # under open ground (1.5m under roads)
-  max_blocks_per_feeder: 8 # max blocks per 33kV radial feeder
+  max_blocks_per_feeder: 8 # radial topology (up to 8 blocks per 33kV circuit)
   power_factor: 0.95 # cos φ for voltage drop calculation
   max_voltage_drop_pct: 3.0 # IEC 60364 / utility limit
 

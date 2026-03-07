@@ -30,11 +30,14 @@ This engine transforms unrefined site boundaries into full conceptual engineerin
 - **BOP Zone Reservation:** Automatically reserves and carves out space for Substation, BESS (Battery Energy Storage System), and O&M compounds _before_ panel placement, mirroring industry-standard tools like PVcase.
 - **Strip-Based Block Generation:** Dynamically chunks PV rows across N-S columns to maximize variable boundary space, recovering otherwise discarded blocks to increase total installed capacity. Maintains strict True South (E-W) alignment for fixed-tilt systems.
 - **Geometric Block Generation:** Clusters and generates PV blocks (e.g., 3.2 MWac) with true module-level geometry, strings, and inverters.
+- **Central Skids & Internal Access Roads:** Automatically carves internal access roads (e.g. 6m gaps) through the heart of utility blocks, centering the Virtual Central Skids (Block Transformers & tightly clustered String Inverters).
 
 ### ⚡ Infrastructure Routing
 
-- **Geometric Herringbone Roads:** Generates a dominant "main collector" spine road from the substation, with perpendicular "branch roads" serving each block.
-- **MV Feeders (Comb Pattern):** 33 kV medium-voltage cables follow a homerun radial topology, routed strictly along road trenches to minimize earthworks.
+- **Terrain-Aware A\* Spine Road:** Generates a dominant "main collector" spine road from the substation using a 10m-resolution A\* pathfinder restricted entirely within the true buildable area, guaranteeing it never crosses exclusion zones.
+- **Herringbone Comb Branches:** Branch roads are generated perpendicular to the local tangent of the curving spine road, creating a natural comb network that flows with the terrain geometry.
+- **Strict Paddock Geometric Containment:** PV Blocks are explicitly clipped to the precise boundaries of "PV Paddocks" (the buildable area minus road corridors), mathematically guaranteeing no overlaps between panels and roads/cable corridors.
+- **Daisy-Chain MV Cables:** 33 kV medium-voltage cables string block transformers together in a daisy-chain along the physical road graph, eliminating cross-country routing and accurately representing real-world commercial topology.
 - **Separated Networks:** Maintains distinct GIS layers for internal access roads, MV electrical cables, and LV DC/AC cabling.
 
 ### 📊 Reporting & Outputs
