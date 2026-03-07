@@ -238,6 +238,29 @@ Based on findings in [CODEBASE_AUDIT.md](file:///d:/Triune/Stack%20Space%20-%20D
 
 ---
 
+## Post-Audit Phase — Advanced Layout Optimisation (Execution Phase 6)
+
+**Fixes fragmentation, fills gaps, and adds economic scoring.**
+
+### Files Changed
+
+#### [MODIFY] [block_generator.py](file:///d:/Triune/Stack%20Space%20-%20Documents/Code/PVLayoutEngine/layout/block_generator.py)
+
+- **Variable block sizing via Strip Generation**: Instead of placing rigid M×N grid cells and rejecting them if they overlay boundaries, the generator now chunks full-column strips, aggregating rows N-S until `target_strings_per_block` is met.
+- **Oblique Tessellation Logic**: Framework added for rotating grid to site's principal axis, but explicitly disabled for fixed-tilt systems to enforce strict E-W orientation.
+
+#### [MODIFY] [metrics.py](file:///d:/Triune/Stack%20Space%20-%20Documents/Code/PVLayoutEngine/analysis/metrics.py)
+
+- **CAPEX Economic Scoring**: Combines unit rates from `config.yaml` (`pv_module_usd_per_watt`, `inverter_usd_per_watt`, `mv_cable_usd_per_m`, `road_usd_per_m2`, `earthworks_usd_per_m3`) to calculate a blended total CAPEX and Specific CAPEX ($/Wdc).
+
+### Manual Validation Gate
+
+- [ ] Blocks fill boundary gaps dynamically, creating irregularly sized but densely packed clusters.
+- [ ] Row footprints remain strictly East-West for fixed-tilt arrays.
+- [ ] Engineering report contains a fully populated "Economic Analysis (CAPEX)" section.
+
+---
+
 ## Sequencing Summary
 
 ```

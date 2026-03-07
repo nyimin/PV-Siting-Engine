@@ -62,7 +62,7 @@ def place_inverters_and_transformers(blocks_gdf, rows_gdf, config, sub_pt):
         if rows_gdf is not None and not rows_gdf.empty:
             block_rows = rows_gdf[rows_gdf["block_id"] == block_id]
         else:
-            block_rows = pd.DataFrame()
+            block_rows = gpd.GeoDataFrame()
             
         for i in range(n_inverters):
             # Cluster tightly around the Border Pad for the Virtual Central approach
@@ -119,29 +119,6 @@ def place_inverters_and_transformers(blocks_gdf, rows_gdf, config, sub_pt):
             crs=blocks_gdf.crs
         )
 
-    # 3. LV Cabling: Connect String Inverters to Block Transformers
-    lv_cables = []
-    if transformers and inverters:
-        xfmr_dict = {x["block_id"]: x["geometry"] for x in transformers}
-        for inv in inverters:
-            block_id = inv["block_id"]
-            if block_id in xfmr_dict:
-                xfmr_pt = xfmr_dict[block_id]
-                inv_pt = inv["geometry"]
-                line = LineString([inv_pt, xfmr_pt])
-                lv_cables.append({
-                    "cable_id": inv["inverter_id"] + "_cable",
-                    "block_id": block_id,
-                    "cable_type": "LV_AC",
-                    "length_m": round(line.length, 1),
-                    "geometry": line
-                })
-    
-    if lv_cables:
-        lv_cables_gdf = gpd.GeoDataFrame(lv_cables, crs=blocks_gdf.crs)
-    else:
-        lv_cables_gdf = gpd.GeoDataFrame(columns=["cable_id", "block_id", "cable_type", "geometry"], crs=blocks_gdf.crs)
-
     # Summary
     total_modules = sum(inv.get("modules", 0) for inv in inverters)
     total_strings = sum(inv.get("strings", 0) for inv in inverters)
@@ -149,8 +126,5 @@ def place_inverters_and_transformers(blocks_gdf, rows_gdf, config, sub_pt):
     logger.info(f"  Total modules: {total_modules:,}")
     logger.info(f"  Total strings: {total_strings:,}")
     logger.info(f"  Total DC capacity: {total_modules * mod_power_w / 1e6:.2f} MW")
-    
-    total_lv_km = lv_cables_gdf["length_m"].sum() / 1000 if not lv_cables_gdf.empty else 0
-    logger.info(f"  Generated {len(lv_cables_gdf)} LV AC Cables ({total_lv_km:.2f} km)")
 
-    return inverters_gdf, transformers_gdf, lv_cables_gdf
+    return inverters_gdf, transformers_gdf

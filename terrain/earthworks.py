@@ -19,13 +19,27 @@ def calculate_earthworks(blocks_gdf, terrain_paths, config):
     total_fill_m3 = 0.0
     rejected_area_ha = 0.0
     
-    grading_cost_per_m3 = config.get("costs", {}).get("grading_usd_per_m3", 5.0)
+    grading_cost_per_m3 = config.get("economics", {}).get("earthworks_usd_per_m3", 5.0)
     max_cut_threshold = config.get("terrain", {}).get("max_cut_m", 1.5)
     
     if blocks_gdf is None or blocks_gdf.empty or not terrain_paths or "dem_utm" not in terrain_paths:
         return 0.0, 0.0, 0.0, 0.0
 
     dem_path = terrain_paths["dem_utm"]
+    
+    # Scale threshold by DEM resolution — coarser DEMs inflate per-cell
+    # elevation range, making a fixed 1.5m threshold too aggressive.
+    # Reference resolution = 10m (high-quality survey-grade).
+    try:
+        import rasterio as _rio
+        with _rio.open(dem_path) as _src:
+            pixel_res = abs(_src.transform.a)
+        scale_factor = max(1.0, pixel_res / 10.0)
+        max_cut_threshold *= scale_factor
+        logger.info(f"  Earthworks max_cut threshold scaled to {max_cut_threshold:.2f}m "
+                    f"(DEM res={pixel_res:.1f}m, scale={scale_factor:.1f}×)")
+    except Exception:
+        pass
     
     try:
         import rasterio

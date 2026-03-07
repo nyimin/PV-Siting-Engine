@@ -155,8 +155,8 @@ def create_interactive_map(site_gdf, buildable_gdf, blocks_gdf, rows_gdf,
 
     if not site_gdf.empty:
         site_wgs84 = site_gdf.to_crs(epsg=4326)
-        center_y = site_wgs84.geometry.unary_union.centroid.y
-        center_x = site_wgs84.geometry.unary_union.centroid.x
+        center_y = site_wgs84.geometry.union_all().centroid.y
+        center_x = site_wgs84.geometry.union_all().centroid.x
     else:
         center_y, center_x = 0, 0
 

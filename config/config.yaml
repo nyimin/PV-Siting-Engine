@@ -20,6 +20,21 @@ substation:
   compound_width_m: 80
   compound_height_m: 60
 
+bop_siting:
+  # Multi-criteria scoring weights for substation/BOP placement.
+  # Higher weight = more influence on final placement decision.
+  weights:
+    terrain_slope: 0.30 # flatness at compound footprint
+    proximity_poi: 0.20 # closeness to POI or site centroid
+    road_access: 0.15 # proximity to existing roads
+    water_avoidance: 0.15 # distance from water bodies
+    buildable_coverage: 0.20 # how much of compound footprint is buildable
+  # Interior grid sampling resolution (metres).
+  # Smaller = more candidates tested (slower but better).
+  interior_grid_spacing_m: 80
+  # Maximum acceptable mean slope (degrees) across compound footprint.
+  max_compound_slope_deg: 5.0
+
 om_compound:
   # O&M office + workshop + warehouse (IEA-PVPS T13 / IRENA BOP)
   width_m: 100
@@ -35,6 +50,7 @@ roads:
   maintenance_aisle_width_m: 4 # inter-block maintenance aisles
   max_gradient_pct: 5 # monsoon drainage and vehicle safety
   grid_resolution_m: 15 # routing grid resolution
+  road_surface_buffer: true # generate road surface polygons for area accounting
 
 mv_cables:
   # 33 kV AC Collection System (IEC 60502-2 / IEC 60287)
@@ -42,6 +58,16 @@ mv_cables:
   voltage_kv: 33
   routing: alongside_roads # trench beside road corridors, not cross-country
   trench_depth_m: 1.2 # under open ground (1.5m under roads)
+  max_blocks_per_feeder: 8 # max blocks per 33kV radial feeder
+  power_factor: 0.95 # cos φ for voltage drop calculation
+  max_voltage_drop_pct: 3.0 # IEC 60364 / utility limit
+
+economics:
+  module_usd_per_wp: 0.20
+  inverter_usd_per_wac: 0.08
+  mv_cable_usd_per_m: 80.0
+  lv_cable_usd_per_m: 40.0
+  road_usd_per_m: 120.0
 
 data:
   cache_dir: data/cache

@@ -7,6 +7,8 @@ from shapely.geometry import Polygon, MultiPolygon, LineString, box, mapping, Po
 from shapely.affinity import rotate, translate
 from shapely.ops import unary_union
 
+from utils.raster_helpers import sample_raster_mean as _sample_raster_mean
+
 logger = logging.getLogger("PVLayoutEngine.layout")
 
 
@@ -93,19 +95,7 @@ def _compute_block_dimensions(config, site_latitude):
     return flat_pitch, strings_per_row, string_ew_width, phys_row_length, table_height_m, row_height_m, tilt_deg, total_strings
 
 
-def _sample_raster_mean(geom, raster_path):
-    """Samples the mean value of a raster within a given geometry."""
-    try:
-        import rasterio
-        from rasterio.mask import mask
-        with rasterio.open(raster_path) as src:
-            out_image, _ = mask(src, [geom], crop=True)
-            valid = out_image[out_image != src.nodata]
-            if valid.size > 0:
-                return float(np.nanmean(valid))
-    except Exception:
-        pass
-    return None
+# _sample_raster_mean imported from utils.raster_helpers
 
 
 def _check_row_terrain(row_geom, terrain_paths, config=None):
@@ -175,7 +165,7 @@ def generate_solar_blocks(buildable_area_gdf, config, terrain_paths=None):
 
     # Derive site latitude from buildable area centroid
     site_wgs84 = buildable_area_gdf.to_crs(epsg=4326)
-    site_latitude = site_wgs84.geometry.unary_union.centroid.y
+    site_latitude = site_wgs84.geometry.union_all().centroid.y
     winter_solar_elevation = max(10.0, 90.0 - abs(site_latitude) - 23.5)
     logger.info(f"  Site latitude: {site_latitude:.2f}° — winter solar elevation: {winter_solar_elevation:.1f}°")
 
@@ -203,182 +193,197 @@ def generate_solar_blocks(buildable_area_gdf, config, terrain_paths=None):
     # ── Minimum fill fraction (LG-06) ───────────────────────────────────────────
     min_fill = block_cfg.get("min_fill_fraction", 0.60)
 
-    # ── Row orientation: fixed-tilt northern hemisphere = 0° rotation ────────────
-    # For fixed-tilt, rows run E-W naturally (no rotation needed).
-    # angle_deg = 0 for N hemisphere; 0 for S hemisphere too (E-W rows are optimal globally).
-    # This replaces the confusing angle_deg=180 which was a no-op but hid the intent (LG-02).
-    use_rotation = False
-    if tracker_type != "fixed":
-        # Single-axis trackers rotate to face sun — leave to future implementation
-        logger.warning("Non-fixed tracking detected — row rotation not yet implemented. "
-                       "Defaulting to fixed-tilt E-W layout.")
+    # ── Oblique Tessellation (Task 6.2) ─────────────────────────────────────────
+    oblique = block_cfg.get("oblique_tessellation", False)
+    
+    if tracker_type == "fixed" and oblique:
+        logger.info("  Oblique tessellation disabled: Fixed-tilt systems require strict True South alignment.")
+        oblique = False
 
-    minx, miny, maxx, maxy = buildable_area_gdf.total_bounds
+    working_area = buildable_area_gdf.copy()
+    centroid = working_area.geometry.union_all().centroid
+    angle_deg = 0.0
 
-    # ── Block tessellation grid dimensions ──────────────────────────────────────
-    # Use a fixed physical block footprint (from config) rather than deriving from
-    # string counts. This matches PVcase: blocks are physical areas (~2.5 ha each),
-    # independent of how many strings are configured per row.
-    #
-    # block_col_width = row E-W length + 5m aisle (one column of row panels)
-    # block_row_height = target physical N-S height (from footprint_ha / col_width)
-    footprint_ha = block_cfg.get("footprint_ha", 2.5)
+    if oblique:
+        # Find principal axis from Minimum Bounding Rectangle
+        hull = working_area.geometry.union_all().convex_hull
+        rect = hull.minimum_rotated_rectangle
+        coords = list(rect.exterior.coords)
+        edge_lengths = [math.hypot(coords[i+1][0] - coords[i][0], coords[i+1][1] - coords[i][1]) for i in range(4)]
+        longest_edge_idx = np.argmax(edge_lengths)
+        dx = coords[longest_edge_idx+1][0] - coords[longest_edge_idx][0]
+        dy = coords[longest_edge_idx+1][1] - coords[longest_edge_idx][1]
+        angle_rad = math.atan2(dy, dx)
+        angle_deg = math.degrees(angle_rad)
+        
+        # Normalize angle to keep it somewhat horizontal (-45 to 45 deg if possible)
+        # We want the *rows* to run parallel to the longest edge of the site.
+        # Rotating by -angle_deg makes the longest edge point straight E-W.
+        working_area["geometry"] = working_area.geometry.rotate(-angle_deg, origin=centroid)
+        logger.info(f"  Oblique tessellation: rotated bounding box by {-angle_deg:.2f}° to align with principal axis.")
+
+    minx, miny, maxx, maxy = working_area.total_bounds
+
+    # ── Block tessellation strip dimensions ──────────────────────────────────────
+    # We divide the site into vertical (N-S) strips of block_col_width.
+    # Rows are placed E-W inside these strips.
     block_col_width = phys_row_length + 5.0      # E-W width of one block column
-    block_row_height = max(
-        (footprint_ha * 10000) / block_col_width, # N-S height from area target
-        5 * flat_pitch + 10.0                     # minimum: 5 rows + buffer
-    )
 
-    expected_rows = int(block_row_height / flat_pitch)
-    logger.info(f"  Block tessellation cell: {block_col_width:.1f} m E-W × {block_row_height:.1f} m N-S "
-                f"(~{expected_rows} rows @ {flat_pitch:.2f} m pitch, {footprint_ha} ha target)")
-
-    # Phase 1: Generate tessellation grid
-    grid_polys = []
-    x = minx
-    while x < maxx:
-        y = miny
-        while y < maxy:
-            poly = Polygon([
-                (x, y),
-                (x + block_col_width, y),
-                (x + block_col_width, y + block_row_height),
-                (x, y + block_row_height)
-            ])
-            grid_polys.append(poly)
-            y += block_row_height
-        x += block_col_width
-
-    grid_gdf = gpd.GeoDataFrame(geometry=grid_polys, crs=buildable_area_gdf.crs)
-
-    # Phase 2: Intersect grid with buildable area
-    logger.info("  Intersecting tessellation grid with buildable area...")
-    block_candidates = gpd.overlay(grid_gdf, buildable_area_gdf, how='intersection')
-
-    if block_candidates.empty:
-        logger.warning("No buildable blocks found after tessellation.")
-        return buildable_area_gdf, buildable_area_gdf
+    logger.info(f"  Block tessellation column width: {block_col_width:.1f} m E-W. Height is variable (Task 6.1).")
 
     blocks = []
     final_rows = []
     block_id_counter = 1
 
-    # Phase 3: Fill each grid cell with E-W rows, stepping N-S by pitch
-    for idx, cand in block_candidates.iterrows():
-        geom = cand.geometry
+    current_block_rows = []
+    current_strings = 0
 
-        # Discard tiny fragments (< 30% of ideal block area)
-        ideal_area = block_col_width * block_row_height
-        if geom.area < (ideal_area * 0.3):
+    x = minx
+    while x < maxx:
+        # Define the column strip
+        col_poly = Polygon([
+            (x, miny),
+            (x + block_col_width, miny),
+            (x + block_col_width, maxy),
+            (x, maxy)
+        ])
+
+        # Intersect strip with working area
+        col_intersection = gpd.overlay(
+            gpd.GeoDataFrame(geometry=[col_poly], crs=working_area.crs),
+            working_area,
+            how='intersection'
+        )
+
+        if col_intersection.empty:
+            x += block_col_width
             continue
 
-        # Handle MultiPolygon fragments
-        if geom.geom_type == 'MultiPolygon':
-            polys = list(geom.geoms)
-        else:
-            polys = [geom]
+        # Task 6.1: Variable block sizing - collect all valid rows in this column
+        column_rows = []
+        for _, cand in col_intersection.iterrows():
+            geom = cand.geometry
+            if geom.geom_type == 'MultiPolygon':
+                polys = list(geom.geoms)
+            else:
+                polys = [geom]
 
-        for component_poly in polys:
-            if component_poly.area < (ideal_area * 0.2):
-                continue
+            for poly in polys:
+                c_minx, c_miny, c_maxx, c_maxy = poly.bounds
+                # Start Y
+                y = c_miny + row_height_m / 2
 
-            c_minx, c_miny, c_maxx, c_maxy = component_poly.bounds
-
-            # ── Fill rows: step N-S by flat_pitch, E-W by phys_row_length ─────
-            # Rows are E-W rectangles; pitch is the N-S distance between row centres.
-            # y = row centre (N-S), x = row centre (E-W)
-            y = c_miny + row_height_m / 2
-            current_strings = 0
-            block_rows = []
-
-            while y + row_height_m / 2 <= c_maxy and current_strings < target_strings_per_block:
-
-                # Local slope-adjusted pitch (terrain-following, optional)
-                row_pitch = flat_pitch
-                if terrain_paths and "slope" in terrain_paths:
-                    mid_x = (c_minx + c_maxx) / 2
-                    pt_slope = _sample_raster_mean(Point(mid_x, y).buffer(10), terrain_paths["slope"])
-                    if pt_slope is not None and pt_slope > 0:
-                        row_pitch = _compute_slope_adjusted_pitch(
-                            flat_pitch, tilt_deg, pt_slope, winter_solar_elevation
-                        )
-
-                # Place row segments E-W along this N-S position
-                x = c_minx + phys_row_length / 2
-                while x + phys_row_length / 2 <= c_maxx and current_strings < target_strings_per_block:
+                while y + row_height_m / 2 <= c_maxy:
+                    # Local slope-adjusted pitch (terrain-following, optional)
+                    row_pitch = flat_pitch
+                    if terrain_paths and "slope" in terrain_paths:
+                        mid_x = (c_minx + c_maxx) / 2
+                        pt = Point(mid_x, y)
+                        if angle_deg != 0.0:
+                            pt = rotate(pt, angle_deg, origin=centroid)
+                        pt_slope = _sample_raster_mean(pt.buffer(10), terrain_paths["slope"])
+                        if pt_slope is not None and pt_slope > 0:
+                            row_pitch = _compute_slope_adjusted_pitch(
+                                flat_pitch, tilt_deg, pt_slope, winter_solar_elevation
+                            )
 
                     # Row rectangle: width = phys_row_length (E-W), height = row_height_m (N-S)
                     half_len = phys_row_length / 2
                     half_h = row_height_m / 2
+                    row_center_x = x + block_col_width / 2
+
                     row_rect = Polygon([
-                        (x - half_len, y - half_h),
-                        (x + half_len, y - half_h),
-                        (x + half_len, y + half_h),
-                        (x - half_len, y + half_h),
+                        (row_center_x - half_len, y - half_h),
+                        (row_center_x + half_len, y - half_h),
+                        (row_center_x + half_len, y + half_h),
+                        (row_center_x - half_len, y + half_h),
                     ])
-                    # Accept row if its centroid is inside the buildable poly AND
-                    # at least 50% of the row footprint overlaps — this handles the
-                    # case where tessellation clipping creates irregular polygon edges
-                    # that cannot fully contain an axis-aligned E-W rectangle.
-                    centroid_ok = component_poly.contains(row_rect.centroid)
-                    if centroid_ok:
-                        overlap = component_poly.intersection(row_rect)
+
+                    if poly.contains(row_rect.centroid):
+                        overlap = poly.intersection(row_rect)
                         if overlap.area / row_rect.area >= 0.50:
-                            terrain_ok, slope_val = _check_row_terrain(row_rect, terrain_paths, config)
+                            # Terrain check must use the UN-ROTATED polygon
+                            true_row_rect = row_rect
+                            if angle_deg != 0.0:
+                                true_row_rect = rotate(row_rect, angle_deg, origin=centroid)
+
+                            terrain_ok, slope_val = _check_row_terrain(true_row_rect, terrain_paths, config)
                             if terrain_ok:
-                                strings_to_add = min(strings_per_row,
-                                                     target_strings_per_block - current_strings)
-                                block_rows.append({
-                                    "geometry": row_rect,
-                                    "strings": strings_to_add,
-                                    "slope_deg": round(slope_val, 2)
+                                column_rows.append({
+                                    "geometry": true_row_rect, # Store true geometry
+                                    "slope_deg": round(slope_val, 2),
+                                    "y": y
                                 })
-                                current_strings += strings_to_add
+                    y += row_pitch
 
-                    x += phys_row_length + 5.0   # 5 m inter-column aisle
+        # Sort rows in column from south to north (by Y)
+        column_rows.sort(key=lambda r: r["y"])
 
-                y += row_pitch   # N-S step by pitch
+        # Chunk rows into blocks across columns
 
-            # ── Accept block if physical utilisation meets minimum threshold (LG-06) ──
-            # Physical utilisation = rows placed / max rows geometrically possible in this cell.
-            # This decouples electrical block sizing from tessellation cell geometry:
-            # a 2.5ha cell holds ~25 rows; target_strings_per_block (220) is the ideal
-            # electrical block size, but tessellation cells can be smaller and still valid.
-            c_ns_height = c_maxy - c_miny
-            max_possible_rows = max(1, int(c_ns_height / flat_pitch))
-            phys_utilisation = len(block_rows) / max_possible_rows
+        for r in column_rows:
+            strings_to_add = min(strings_per_row, target_strings_per_block - current_strings)
+            current_block_rows.append((r, strings_to_add))
+            current_strings += strings_to_add
 
-            if len(block_rows) >= 2 and phys_utilisation >= min_fill:
-                block_name = f"B{block_id_counter:03d}"
+            if current_strings >= target_strings_per_block:
+                fill_pct = current_strings / target_strings_per_block
+                if fill_pct >= min_fill:
+                    # Save block
+                    block_geom = unary_union([b[0]["geometry"] for b in current_block_rows]).convex_hull
+                    block_name = f"B{block_id_counter:03d}"
+                    block_dc = round(current_strings * mods_per_string * mod_power_w / 1e6, 3)
+                    block_ac = round(ac_per_block * (current_strings / target_strings_per_block), 3)
 
-                # Capacity from first principles: actual strings placed × per-string power (LG-03)
-                mod_power_w = solar_cfg["module_power_w"]
-                block_dc = round(current_strings * mods_per_string * mod_power_w / 1e6, 3)
-                # AC: pro-rate inverter capacity by string fraction
-                strings_fraction = current_strings / target_strings_per_block
-                block_ac = round(ac_per_block * min(strings_fraction, 1.0), 3)
-
-                blocks.append({
-                    "block_id": block_name,
-                    "geometry": component_poly,
-                    "area_ha": round(component_poly.area / 10000, 3),
-                    "capacity_ac_mw": block_ac,
-                    "capacity_dc_mw": block_dc,
-                    "strings": current_strings,
-                    "fill_pct": round(phys_utilisation * 100, 1),
-                })
-
-                for r_idx, r in enumerate(block_rows):
-                    final_rows.append({
+                    blocks.append({
                         "block_id": block_name,
-                        "row_id": r_idx,
-                        "geometry": r["geometry"],
-                        "strings": r["strings"],
-                        "slope_deg": r["slope_deg"],
+                        "geometry": block_geom,
+                        "area_ha": round(block_geom.area / 10000, 3),
+                        "capacity_ac_mw": block_ac,
+                        "capacity_dc_mw": block_dc,
+                        "strings": current_strings,
+                        "fill_pct": round(fill_pct * 100, 1),
                     })
-                block_id_counter += 1
-            else:
-                logger.debug(f"  Discarded block: {len(block_rows)} rows, phys_util={phys_utilisation*100:.1f}% < {min_fill*100:.0f}%")
+                    for r_idx, (r_data, s_add) in enumerate(current_block_rows):
+                        final_rows.append({
+                            "block_id": block_name,
+                            "row_id": r_idx,
+                            "geometry": r_data["geometry"],
+                            "strings": s_add,
+                            "slope_deg": r_data["slope_deg"],
+                        })
+                    block_id_counter += 1
+                current_block_rows = []
+                current_strings = 0
+
+        x += block_col_width
+
+    # Save final remainder block after all columns are processed
+    if current_block_rows:
+        fill_pct = current_strings / target_strings_per_block
+        if fill_pct >= min_fill:
+            block_geom = unary_union([b[0]["geometry"] for b in current_block_rows]).convex_hull
+            block_name = f"B{block_id_counter:03d}"
+            block_dc = round(current_strings * mods_per_string * mod_power_w / 1e6, 3)
+            block_ac = round(ac_per_block * (current_strings / target_strings_per_block), 3)
+
+            blocks.append({
+                "block_id": block_name,
+                "geometry": block_geom,
+                "area_ha": round(block_geom.area / 10000, 3),
+                "capacity_ac_mw": block_ac,
+                "capacity_dc_mw": block_dc,
+                "strings": current_strings,
+                "fill_pct": round(fill_pct * 100, 1),
+            })
+            for r_idx, (r_data, s_add) in enumerate(current_block_rows):
+                final_rows.append({
+                    "block_id": block_name,
+                    "row_id": r_idx,
+                    "geometry": r_data["geometry"],
+                    "strings": s_add,
+                    "slope_deg": r_data["slope_deg"],
+                })
 
     if not blocks:
         logger.warning("No rows or blocks successfully generated.")

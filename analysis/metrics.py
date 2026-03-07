@@ -43,7 +43,7 @@ def compile_metrics(site_gdf, buildable_gdf, exclusions_gdf, blocks_gdf, rows_gd
 
     # Earthworks & PVWatts Yield
     site_wgs84 = site_gdf.to_crs(epsg=4326)
-    centroid = site_wgs84.geometry.unary_union.centroid
+    centroid = site_wgs84.geometry.union_all().centroid
     lat, lon = centroid.y, centroid.x
 
     annual_p50_mwh, annual_p90_mwh, spec_yield, pvwatts_used = calculate_yield(lat, lon, installed_dc_mw, config)
@@ -81,6 +81,25 @@ def compile_metrics(site_gdf, buildable_gdf, exclusions_gdf, blocks_gdf, rows_gd
     mod_power_w = 635
     if config:
         mod_power_w = config.get("solar", {}).get("module_power_w", 635)
+        
+    # Phase 6: Economics / CAPEX
+    eco_cfg = config.get("economics", {}) if config else {}
+    mod_usd_wp = eco_cfg.get("module_usd_per_wp", 0.20)
+    inv_usd_wac = eco_cfg.get("inverter_usd_per_wac", 0.08)
+    mv_usd_m = eco_cfg.get("mv_cable_usd_per_m", 80.0)
+    lv_usd_m = eco_cfg.get("lv_cable_usd_per_m", 40.0)
+    road_usd_m = eco_cfg.get("road_usd_per_m", 120.0)
+    
+    # Calculate component costs
+    capex_modules = installed_dc_mw * 1e6 * mod_usd_wp
+    capex_inverters = installed_ac_mw * 1e6 * inv_usd_wac
+    capex_mv_cables = (mv_cable_km * 1000) * mv_usd_m
+    capex_lv_cables = (lv_cable_km * 1000) * lv_usd_m
+    capex_roads = (roads_km * 1000) * road_usd_m
+    # ew_capex is already calculated by calculate_earthworks
+    
+    total_capex = capex_modules + capex_inverters + capex_mv_cables + capex_lv_cables + capex_roads + ew_capex
+    capex_per_wp = total_capex / (installed_dc_mw * 1e6) if installed_dc_mw > 0 else 0
 
     metrics = {
         # Site
@@ -136,9 +155,29 @@ def compile_metrics(site_gdf, buildable_gdf, exclusions_gdf, blocks_gdf, rows_gd
         "ew_capex_usd": round(ew_capex, 2),
         "earthworks_rejected_ha": round(ew_rejected_ha, 2),
 
+        # Economics
+        "capex_modules_usd": round(capex_modules, 0),
+        "capex_inverters_usd": round(capex_inverters, 0),
+        "capex_mv_cables_usd": round(capex_mv_cables, 0),
+        "capex_lv_cables_usd": round(capex_lv_cables, 0),
+        "capex_roads_usd": round(capex_roads, 0),
+        "total_capex_usd": round(total_capex, 0),
+        "capex_per_wp_usd": round(capex_per_wp, 3),
+
         # Warnings
         "dem_warnings": dem_warnings or [],
     }
+
+    # Phase 5: Feeder-level electrical metrics
+    if mv_cables_gdf is not None and not mv_cables_gdf.empty:
+        n_feeders = mv_cables_gdf["feeder_id"].nunique() if "feeder_id" in mv_cables_gdf.columns else 0
+        max_vd = mv_cables_gdf["voltage_drop_pct"].max() if "voltage_drop_pct" in mv_cables_gdf.columns else 0
+        metrics["num_feeders"] = n_feeders
+        metrics["max_voltage_drop_pct"] = round(float(max_vd), 2) if max_vd else 0
+        # Feeder details from attrs (stashed by routing.py)
+        feeder_details = getattr(mv_cables_gdf, 'attrs', {}).get('feeder_details', [])
+        if feeder_details:
+            metrics["feeder_details"] = feeder_details
 
     # Exclusion breakdown by constraint type
     if not exclusions_gdf.empty and "constraint_type" in exclusions_gdf.columns:
@@ -277,6 +316,19 @@ def generate_report(metrics, output_dir):
 | **Est. Grading Capex ($)** | **${metrics['ew_capex_usd']:,.0f} USD** |
 | High Topo Rejected Area | {metrics['earthworks_rejected_ha']} ha |
 
+## Economic Analysis (CAPEX)
+
+| Category | Cost (USD) | 
+|----------|------------|
+| PV Modules | ${metrics.get('capex_modules_usd', 0):,.0f} |
+| Inverters | ${metrics.get('capex_inverters_usd', 0):,.0f} |
+| MV Electrical | ${metrics.get('capex_mv_cables_usd', 0):,.0f} |
+| LV Electrical | ${metrics.get('capex_lv_cables_usd', 0):,.0f} |
+| Internal Roads | ${metrics.get('capex_roads_usd', 0):,.0f} |
+| Civil Earthworks | ${metrics.get('ew_capex_usd', 0):,.0f} |
+| **Total Blended CAPEX** | **${metrics.get('total_capex_usd', 0):,.0f}** |
+| **Specific CAPEX** | **${metrics.get('capex_per_wp_usd', 0):.3f} / Wdc** |
+
 ## Layout Components
 
 | Component | Count |
@@ -299,10 +351,30 @@ def generate_report(metrics, output_dir):
 | LV AC Cable Length | {metrics['lv_cable_length_km']} km |
 | MV Cable Length | {metrics['mv_cable_length_km']} km |
 | Access Road Length | {metrics['internal_roads_km']} km |
-
-## Risk Assessment
-
 """
+
+    # Phase 5: Electrical Collection System section
+    electrical_section = ""
+    if "feeder_details" in metrics and metrics["feeder_details"]:
+        electrical_section = "\n## Electrical Collection System\n\n"
+        electrical_section += f"*{metrics.get('num_feeders', 0)} radial feeders, "
+        electrical_section += f"33kV XLPE Al, IEC 60502-2 sizing.*\n\n"
+        electrical_section += "| Feeder | Blocks | Load (MW) | Length (km) | Cable | Current (A) | VD% |\n"
+        electrical_section += "|--------|--------|-----------|-------------|-------|-------------|-----|\n"
+        for fd in metrics["feeder_details"]:
+            vd_warn = " ⚠️" if fd['vd_pct'] > 3.0 else ""
+            electrical_section += (
+                f"| {fd['feeder_id']} | {fd['n_blocks']} | {fd['load_mw']} | "
+                f"{fd['trunk_km']} | {fd['cable_mm2']}mm² Al | {fd['current_a']} | "
+                f"{fd['vd_pct']}{vd_warn} |\n"
+            )
+        max_vd = metrics.get('max_voltage_drop_pct', 0)
+        vd_status = "✓ Within 3% limit" if max_vd <= 3.0 else f"⚠️ Exceeds 3% limit ({max_vd}%)"
+        electrical_section += f"\n> **Max Voltage Drop:** {max_vd}% — {vd_status}\n"
+
+    content += electrical_section
+
+    content += "\n## Risk Assessment\n\n"
     # Risk assessment
     risks = []
     if not metrics['is_feasible']:

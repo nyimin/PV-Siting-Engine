@@ -167,7 +167,7 @@ def worldcover_exclusion_mask(worldcover_path, site_gdf, output_path):
 
     with rasterio.open(worldcover_path) as src:
         # Clip to site bounds
-        site_geom_list = [site_wgs84.geometry.unary_union.__geo_interface__]
+        site_geom_list = [site_wgs84.geometry.union_all().__geo_interface__]
         try:
             out_image, out_transform = rio_mask(src, site_geom_list, crop=True)
         except Exception as e:

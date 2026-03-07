@@ -274,7 +274,7 @@ def combine_constraints(site_gdf, osm_exclusions, terrain_analysis_paths, config
     setback_m = buffers_cfg.get("site_boundary_m", 10)
     if setback_m > 0:
         logger.info(f"  Applying {setback_m}m inward setback from site boundary...")
-        site_geom = site_gdf.geometry.unary_union
+        site_geom = site_gdf.geometry.union_all()
         inward_geom = site_geom.buffer(-setback_m)
         setback_exclusion = site_geom.difference(inward_geom)
         if not setback_exclusion.is_empty:

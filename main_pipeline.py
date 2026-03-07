@@ -16,6 +16,7 @@ from layout.block_generator import generate_solar_blocks
 from layout.bop_placement import place_inverters_and_transformers
 from layout.routing import route_mv_cables_and_roads
 from layout.substation_placement import reserve_bop_zone
+from layout.corridor_planner import plan_corridors
 from analysis.metrics import compile_metrics, generate_report
 from visualization.map_generator import save_gis_layers, create_layout_map, create_interactive_map, create_terrain_maps
 
@@ -23,7 +24,7 @@ from visualization.map_generator import save_gis_layers, create_layout_map, crea
 def _determine_utm_crs(site_gdf):
     """Auto-detect the appropriate UTM CRS from site centroid."""
     site_wgs84 = site_gdf.to_crs(epsg=4326)
-    centroid = site_wgs84.geometry.unary_union.centroid
+    centroid = site_wgs84.geometry.union_all().centroid
     utm_epsg = _auto_utm_epsg(centroid.x, centroid.y)
     return f"EPSG:{utm_epsg}"
 
@@ -178,12 +179,21 @@ def run_pipeline(input_boundary_path, requested_mw, config_path="config/config.y
         site_gdf, buildable_gdf, exclusions_gdf, config, slope_path=slope_path, poi_coord=poi_coord
     )
 
-    # ========== PHASE 6: LAYOUT GENERATION (on BOP-free buildable area) ==========
+    # ========== PHASE 5.5: INFRASTRUCTURE CORRIDOR PLANNING ==========
+    logger.info("=" * 50)
+    logger.info("  PHASE 5.5: INFRASTRUCTURE CORRIDOR PLANNING")
+    logger.info("=" * 50)
+
+    corridor_gdf, corridor_reduced_gdf, corridor_info = plan_corridors(
+        reduced_buildable_gdf, sub_pt, config
+    )
+
+    # ========== PHASE 6: LAYOUT GENERATION (on corridor-free buildable area) ==========
     logger.info("=" * 50)
     logger.info("  PHASE 6: LAYOUT GENERATION")
     logger.info("=" * 50)
 
-    blocks_gdf, rows_gdf = generate_solar_blocks(reduced_buildable_gdf, config, terrain_paths)
+    blocks_gdf, rows_gdf = generate_solar_blocks(corridor_reduced_gdf, config, terrain_paths)
 
     # ── Post-generation BOP guard: drop any PV rows whose centroid falls inside
     #    the BOP zone. The block generator works at polygon level and edge rows
@@ -213,17 +223,19 @@ def run_pipeline(input_boundary_path, requested_mw, config_path="config/config.y
     logger.info("  PHASE 7: BALANCE OF PLANT EQUIPMENT")
     logger.info("=" * 50)
 
-    inverters_gdf, transformers_gdf, lv_cables_gdf = place_inverters_and_transformers(blocks_gdf, rows_gdf, config, sub_pt)
+    inverters_gdf, transformers_gdf = place_inverters_and_transformers(blocks_gdf, rows_gdf, config, sub_pt)
+    lv_cables_gdf = None  # LV cabling removed in Phase 1 stabilisation — placeholder had no engineering value
 
     roads_gdf, mv_cables_gdf = route_mv_cables_and_roads(
         inverters_gdf, transformers_gdf, sub_pt, blocks_gdf, config,
         terrain_paths=terrain_paths, exclusions_gdf=exclusions_gdf,
-        buildable_area_gdf=reduced_buildable_gdf
+        buildable_area_gdf=corridor_reduced_gdf,
+        corridor_info=corridor_info
     )
 
     # ========== PHASE 8: EXPORTS & REPORTING ==========
     logger.info("=" * 50)
-    logger.info("  PHASE 7: EXPORTS & REPORTING")
+    logger.info("  PHASE 8: EXPORTS & REPORTING")
     logger.info("=" * 50)
 
     # Save GIS layers
@@ -241,7 +253,8 @@ def run_pipeline(input_boundary_path, requested_mw, config_path="config/config.y
                     guard_house=guard_gdf,
                     internal_roads=roads_gdf,
                     mv_cables=mv_cables_gdf,
-                    lv_cables=lv_cables_gdf)
+                    lv_cables=lv_cables_gdf,
+                    corridors=corridor_gdf)
 
     # Generate Layout Map
     create_layout_map(site_gdf, buildable_gdf, blocks_gdf, rows_gdf,

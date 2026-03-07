@@ -28,6 +28,7 @@ This engine transforms unrefined site boundaries into full conceptual engineerin
 
 - **Multi-Criteria Substation Placement:** Siting logic evaluates 5 criteria (20% weight each): flat terrain, centroid proximity, road access, flood risk avoidance, and buildability.
 - **BOP Zone Reservation:** Automatically reserves and carves out space for Substation, BESS (Battery Energy Storage System), and O&M compounds _before_ panel placement, mirroring industry-standard tools like PVcase.
+- **Strip-Based Block Generation:** Dynamically chunks PV rows across N-S columns to maximize variable boundary space, recovering otherwise discarded blocks to increase total installed capacity. Maintains strict True South (E-W) alignment for fixed-tilt systems.
 - **Geometric Block Generation:** Clusters and generates PV blocks (e.g., 3.2 MWac) with true module-level geometry, strings, and inverters.
 
 ### ⚡ Infrastructure Routing
@@ -39,6 +40,7 @@ This engine transforms unrefined site boundaries into full conceptual engineerin
 ### 📊 Reporting & Outputs
 
 - **Engineering Report:** Generates a comprehensive Markdown report including DC/AC ratio, GCR, component counts, infrastructure lengths, and a detailed constraints breakdown.
+- **CAPEX Economic Scoring:** Fully calculates Blended CAPEX and Specific CAPEX ($/Wdc) leveraging configurable unit costs for Modules, Inverters, Roads, MV Cables, and Earthworks.
 - **Civil Earthworks Estimation:** Rough Cut/Fill volume (m³) calculation using planar fit analysis over block areas.
 - **Yield Integration:** Estimated annual energy yield integration via NREL PVWatts API.
 - **Visual Assets:** Exports 10+ GIS layers (GeoJSON, GPKG), high-resolution static maps, and interactive HTML dashboards.
