@@ -55,6 +55,40 @@ def place_inverters_and_transformers(blocks_gdf, rows_gdf, config, sub_pt, corri
 
         n_inverters = math.ceil(total_strings / strings_per_inv)
 
+        # Extract data for K-Means clustering
+        inv_centers = []
+        cluster_string_counts = []
+        
+        try:
+            from sklearn.cluster import KMeans
+            use_kmeans = True
+        except ImportError:
+            use_kmeans = False
+            logger.warning("sklearn not installed. Falling back to centroid inverter placement.")
+
+        if use_kmeans and n_inverters > 0 and len(block_rows) >= n_inverters:
+            coords = np.array([row.geometry.centroid.coords[0] for _, row in block_rows.iterrows()])
+            weights = block_rows["strings"].values
+            
+            # Run K-Means
+            kmeans = KMeans(n_clusters=n_inverters, random_state=42, n_init='auto')
+            kmeans.fit(coords, sample_weight=weights)
+            
+            inv_centers = kmeans.cluster_centers_
+            
+            # Count strings per Voronoi partition (cluster)
+            labels = kmeans.labels_
+            cluster_string_counts = np.zeros(n_inverters)
+            for i, label in enumerate(labels):
+                cluster_string_counts[label] += weights[i]
+        else:
+            # Fallback: distribute evenly around the block centroid
+            cx, cy = block_geom.centroid.x, block_geom.centroid.y
+            inv_centers = [(cx + (i - n_inverters/2)*5, cy) for i in range(n_inverters)]
+            base_count = total_strings // n_inverters if n_inverters > 0 else 0
+            remainder = total_strings % n_inverters if n_inverters > 0 else 0
+            cluster_string_counts = [base_count + (1 if i < remainder else 0) for i in range(n_inverters)]
+
         # Edge-based Transformer Placement
         # Snap directly to the external road corridors bordering the paddock/block
         pcu_pad_center = None
@@ -64,20 +98,12 @@ def place_inverters_and_transformers(blocks_gdf, rows_gdf, config, sub_pt, corri
         else:
             # Fallback to the substation point
             pcu_pad_center, _ = nearest_points(block_geom, sub_pt)
-        
-        # Place inverters around the pad rather than a mathematical grid
-        strings_remainder = total_strings
             
         for i in range(n_inverters):
-            # Cluster tightly around the Central Skid
-            offset_x = (i - (n_inverters / 2)) * 1.5  # 1.5m spacing between inverters on the pad
-            inv_point = Point(pcu_pad_center.x + offset_x, pcu_pad_center.y - 3.0) # slightly offset from transformer
-            
-            # Assign valid strings evenly, last inverter might have fewer
-            allocated_strings = min(strings_per_inv, strings_remainder)
-            strings_remainder -= allocated_strings
-
+            inv_point = Point(inv_centers[i])
+            allocated_strings = cluster_string_counts[i]
             inv_dc_kw = allocated_strings * mods_per_string * mod_power_w / 1000  # kW
+            
             # Avoid placing inverters with 0 strings
             if allocated_strings > 0:
                 inverters.append({
@@ -90,7 +116,7 @@ def place_inverters_and_transformers(blocks_gdf, rows_gdf, config, sub_pt, corri
                     "geometry": inv_point,
                 })
 
-        # Place block transformer
+        # Place block transformer at the edge nearest to road
         block_ac_mw = n_inverters * inv_capacity_kw / 1000
         transformers.append({
             "transformer_id": f"{block_id}_XFMR",

@@ -261,9 +261,13 @@ PVLayoutEngine/
 
 2. **Corridor spine vs. routing spine:** The corridor planner generates the spine _geometry_ and reserves space. The routing module uses this spine as the actual road centreline. The old `generate_spine_roads()` medial-axis function is kept as a fallback only (used when `corridor_info=None`).
 
-3. **Phase 5.5 naming:** The pipeline logs `PHASE 5.5: INFRASTRUCTURE CORRIDOR PLANNING`. This is deliberate — it preserves the existing phase numbering while inserting the corridor step at the correct position.
+3. **Algorithm Changes from Handoff Implementation Status**:
+   - The original multi-criteria BOP weights were equally divided (5x 20%). The recent codebase implementation tunes these weights based on real-world factors.
+   - Initial layout generation attempted to use K-Means for block clustering, but the current production algorithm (documented deeply in `technical_documentation.md`) uses global geometric region-growing instead to prioritize strictly contiguous boundaries. K-Means is currently exclusively leveraged within `routing.py` for spatial feeder distributions.
 
-4. **Buildable area flow:**
+4. **Phase 5.5 naming:** The pipeline logs `PHASE 5.5: INFRASTRUCTURE CORRIDOR PLANNING`. This is deliberate — it preserves the existing phase numbering while inserting the corridor step at the correct position.
+
+5. **Buildable area flow:**
 
    ```
    site_boundary → subtract exclusions → buildable_gdf (94.44 ha)
@@ -271,9 +275,9 @@ PVLayoutEngine/
                  → subtract corridors  → corridor_reduced_gdf → block tessellation
    ```
 
-5. **DEM resolution:** The test site uses 30m COP30 DEM resampled to 10m. The HIGH RISK warning in the engineering report about DEM resolution is expected and correct.
+6. **DEM resolution:** The test site uses 30m COP30 DEM resampled to 10m. The HIGH RISK warning in the engineering report about DEM resolution is expected and correct.
 
-6. **OSM data:** The test area (rural Myanmar) has no OSM features for water/roads/railways/power. Warnings about "No matching features" are expected and harmless.
+7. **OSM data:** The test area (rural Myanmar) has no OSM features for water/roads/railways/power. Warnings about "No matching features" are expected and harmless.
 
 ---
 

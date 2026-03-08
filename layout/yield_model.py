@@ -127,15 +127,27 @@ def _run_pysam(lat, lon, dc_capacity_mw, config, rows_gdf, slope_raster_path):
                     )
 
                 # Compute effective tilt per row using local slope (DEGREES)
-                eff_tilts = []
-                for _, row in sample_gdf.iterrows():
-                    local_slope = 0.0
-                    if slope_raster_path:
-                        s = _srm(row.geometry, slope_raster_path)
-                        local_slope = s if s is not None else 0.0  # degrees
-                    # South-facing slope reduces effective tilt; north-facing increases it
-                    eff_tilt = max(0.0, min(90.0, tilt - local_slope))
-                    eff_tilts.append(eff_tilt)
+                import rasterio
+                slope_src = None
+                if slope_raster_path:
+                    try:
+                        slope_src = rasterio.open(slope_raster_path)
+                    except Exception as e:
+                        logger.warning(f"  R4 PySAM: failed to open slope raster: {e}")
+                        
+                try:
+                    eff_tilts = []
+                    for _, row in sample_gdf.iterrows():
+                        local_slope = 0.0
+                        if slope_src:
+                            s = _srm(row.geometry, slope_src)
+                            local_slope = s if s is not None else 0.0  # degrees
+                        # South-facing slope reduces effective tilt; north-facing increases it
+                        eff_tilt = max(0.0, min(90.0, tilt - local_slope))
+                        eff_tilts.append(eff_tilt)
+                finally:
+                    if slope_src:
+                        slope_src.close()
 
                 mean_eff_tilt = float(np.mean(eff_tilts)) if eff_tilts else tilt
                 logger.info(

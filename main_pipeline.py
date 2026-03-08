@@ -1,5 +1,8 @@
 import os
 import sys
+import numpy as np
+if not hasattr(np, 'in1d'):
+    np.in1d = np.isin
 import logging
 import argparse
 import geopandas as gpd

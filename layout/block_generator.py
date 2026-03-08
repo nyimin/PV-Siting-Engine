@@ -55,25 +55,60 @@ def _compute_block_dimensions(config, site_latitude):
 
     tilt_deg = solar.get("tilt_deg", 26)
 
-    # ── PRIMARY: GCR → pitch (commercial standard) ──────────────────────────────
+    # ── PRIMARY: Winter Solstice Pitch for 2P Portrait (or GCR fallback) ──
     gcr = solar.get("gcr", 0.38)
     flat_pitch = round(table_height_m / gcr, 2)
-    logger.info(f"  Row pitch from GCR ({gcr}): {flat_pitch:.2f} m "
-                f"(table depth {table_height_m:.3f} m / GCR {gcr})")
+    
+    # Calculate no-shade pitch at 10:00 AM Winter Solstice
+    declination = math.radians(solar.get("solar_declination_deg", -23.44))
+    hour_angle = math.radians(solar.get("sun_hour_angle_deg", -30.0))
+    lat_rad = math.radians(site_latitude)
 
-    # ── SECONDARY: winter no-shade check (warning only, does not change pitch) ──
-    winter_solar_elevation = max(10.0, 90.0 - abs(site_latitude) - 23.5)
-    vertical_height = table_height_m * math.sin(math.radians(tilt_deg))
-    gap = vertical_height / math.tan(math.radians(winter_solar_elevation))
-    no_shade_pitch = table_height_m * math.cos(math.radians(tilt_deg)) + gap
-    if flat_pitch < no_shade_pitch:
-        logger.warning(
-            f"  GCR-derived pitch ({flat_pitch:.2f} m) < winter no-shade pitch "
-            f"({no_shade_pitch:.2f} m). Inter-row shading will occur at winter "
-            f"solstice. Acceptable for GCR={gcr} — shade angle limited by design."
-        )
+    # Solar elevation angle (alpha)
+    sin_alpha = math.sin(lat_rad) * math.sin(declination) + math.cos(lat_rad) * math.cos(declination) * math.cos(hour_angle)
+    # Prevent math domain errors near poles/terminator
+    sin_alpha = max(-1.0, min(1.0, sin_alpha))
+    alpha = math.asin(sin_alpha)
+    
+    # Solar azimuth angle (Az) from North
+    cos_az_num = math.sin(declination) - math.sin(lat_rad) * sin_alpha
+    cos_az_den = math.cos(lat_rad) * math.cos(alpha)
+    if abs(cos_az_den) > 0.0001:
+        cos_az = cos_az_num / cos_az_den
     else:
-        logger.info(f"  ✓ No-shade check passed (no-shade pitch = {no_shade_pitch:.2f} m ≤ {flat_pitch:.2f} m)")
+        cos_az = 0.0
+    az_rad = math.acos(max(-1.0, min(1.0, cos_az)))
+    if hour_angle > 0:
+        az_rad = 2 * math.pi - az_rad
+
+    # Profile angle on a south-facing array (azimuth 180 deg)
+    rel_az = abs(az_rad - math.pi)
+    
+    if math.cos(rel_az) > 0.0001 and alpha > 0:
+        tan_gamma = math.tan(alpha) / math.cos(rel_az)
+        vertical_height = table_height_m * math.sin(math.radians(tilt_deg))
+        ground_projection = table_height_m * math.cos(math.radians(tilt_deg))
+        no_shade_pitch = ground_projection + vertical_height / tan_gamma
+    else:
+        # Fallback if sun is below horizon or edge cases
+        no_shade_pitch = flat_pitch
+
+    if orientation == "portrait":
+        # Override pitch for 2P orientation based on winter solstice calculation
+        flat_pitch = round(no_shade_pitch, 2)
+        logger.info(f"  Row pitch (Fixed 2P Winter Solstice Override): {flat_pitch:.2f} m "
+                    f"(table depth {table_height_m:.3f} m, profile angle {math.degrees(math.atan(tan_gamma)):.1f}°)")
+    else:
+        logger.info(f"  Row pitch from GCR ({gcr}): {flat_pitch:.2f} m "
+                    f"(table depth {table_height_m:.3f} m / GCR {gcr})")
+        if flat_pitch < no_shade_pitch:
+            logger.warning(
+                f"  GCR-derived pitch ({flat_pitch:.2f} m) < winter no-shade pitch "
+                f"({no_shade_pitch:.2f} m). Inter-row shading will occur at winter "
+                f"solstice."
+            )
+        else:
+            logger.info(f"  ✓ No-shade check passed (no-shade pitch = {no_shade_pitch:.2f} m ≤ {flat_pitch:.2f} m)")
 
     # ── Row E-W length from strings per table (configurable) ────────────────────
     strings_per_row = block_cfg.get("strings_per_table", 4)
@@ -98,12 +133,12 @@ def _compute_block_dimensions(config, site_latitude):
 # _sample_raster_mean imported from utils.raster_helpers
 
 
-def _check_row_terrain(row_geom, terrain_paths, config=None):
+def _check_row_terrain(row_geom, terrain_srcs, config=None):
     """
     Checks if a row violates terrain thresholds.
     Reads max_slope_deg from config (LG-04 fix — no longer hardcoded).
     """
-    if not terrain_paths:
+    if not terrain_srcs:
         return True, 0.0
 
     # Read threshold from config (LG-04)
@@ -112,18 +147,18 @@ def _check_row_terrain(row_geom, terrain_paths, config=None):
         max_slope = config.get("terrain", {}).get("max_slope_deg", 15.0)
 
     slope_val = 0.0
-    if "slope" in terrain_paths:
-        slope = _sample_raster_mean(row_geom, terrain_paths["slope"])
+    if "slope" in terrain_srcs:
+        slope = _sample_raster_mean(row_geom, terrain_srcs["slope"])
         if slope is not None:
             slope_val = slope
             if slope > max_slope:
                 return False, slope_val
 
-    if "curvature" in terrain_paths:
+    if "curvature" in terrain_srcs:
         max_curv = 0.4
         if config:
             max_curv = config.get("terrain", {}).get("max_curvature", 0.4)
-        curv = _sample_raster_mean(row_geom, terrain_paths["curvature"])
+        curv = _sample_raster_mean(row_geom, terrain_srcs["curvature"])
         if curv is not None and abs(curv) > max_curv:
             return False, slope_val
 
@@ -149,9 +184,9 @@ def _compute_slope_adjusted_pitch(base_pitch, tilt_deg, terrain_slope_deg, winte
 def generate_solar_blocks(buildable_area_gdf, config, terrain_paths=None):
     """
     Generates PV blocks by tessellating the buildable area with a regular E-W/N-S grid,
-    then fills the grid with 2P portrait fixed-tilt rows. Employs 2D Spatial Clustering 
-    (K-Means) to group generated rows into contiguous, commercial-scale Inverter Blocks 
-    (e.g., 3.2 MWac).
+    then fills the grid with 2P portrait fixed-tilt rows. Groups rows into 
+    contiguous, commercial-scale Inverter Blocks (e.g., 3.2 MWac) utilizing 
+    region-growing adjacency strategies until the target MW is achieved.
     """
     logger.info("Generating tessellated PV rows and clustering into Power Blocks...")
 
@@ -226,69 +261,82 @@ def generate_solar_blocks(buildable_area_gdf, config, terrain_paths=None):
     # Read gaps from config
     inter_table_gap_m = block_cfg.get("inter_table_gap_m", 0.5)
     
-    while x < maxx:
-        # The East-West width of the physical table
-        table_ew_width = phys_row_length
-        
-        col_poly = Polygon([
-            (x, miny), (x + table_ew_width, miny),
-            (x + table_ew_width, maxy), (x, maxy)
-        ])
-
-        col_intersection = gpd.overlay(
-            gpd.GeoDataFrame(geometry=[col_poly], crs=working_area.crs),
-            working_area,
-            how='intersection'
-        )
-
-        if not col_intersection.empty:
-            for _, cand in col_intersection.iterrows():
-                geom = cand.geometry
-                polys = list(geom.geoms) if geom.geom_type == 'MultiPolygon' else [geom]
-
-                for poly in polys:
-                    c_minx, c_miny, c_maxx, c_maxy = poly.bounds
-                    
-                    # Align the starting Y coordinate to a global grid based on the site's flat_pitch
-                    # This ensures rows are globally straight across different columns/polygons
-                    n_steps = math.ceil(max(0, c_miny - miny) / flat_pitch)
-                    y = miny + row_height_m / 2 + n_steps * flat_pitch
-
-                    while y + row_height_m / 2 <= c_maxy:
-                        row_pitch = flat_pitch
+    import rasterio
+    from contextlib import ExitStack
+    
+    with ExitStack() as stack:
+        terrain_srcs = {}
+        if terrain_paths:
+            for key, path in terrain_paths.items():
+                if path:
+                    try:
+                        terrain_srcs[key] = stack.enter_context(rasterio.open(path))
+                    except Exception:
+                        pass
                         
-                        half_len = table_ew_width / 2
-                        half_h = row_height_m / 2
-                        row_center_x = x + table_ew_width / 2
-
-                        row_rect = Polygon([
-                            (row_center_x - half_len, y - half_h),
-                            (row_center_x + half_len, y - half_h),
-                            (row_center_x + half_len, y + half_h),
-                            (row_center_x - half_len, y + half_h),
-                        ])
-
-                        if poly.contains(row_rect.centroid):
-                            overlap = poly.intersection(row_rect)
-                            if overlap.area / row_rect.area >= 0.50:
-                                terrain_ok, slope_val = _check_row_terrain(row_rect, terrain_paths, config)
-                                if terrain_ok:
-                                    all_candidate_rows.append({
-                                        "geometry": row_rect,
-                                        "slope_deg": round(slope_val, 2),
-                                        "strings": strings_per_row,
-                                        "paddock_id": cand.get("paddock_id", "P000")
-                                    })
+        while x < maxx:
+            # The East-West width of the physical table
+            table_ew_width = phys_row_length
+            
+            col_poly = Polygon([
+                (x, miny), (x + table_ew_width, miny),
+                (x + table_ew_width, maxy), (x, maxy)
+            ])
+    
+            col_intersection = gpd.overlay(
+                gpd.GeoDataFrame(geometry=[col_poly], crs=working_area.crs),
+                working_area,
+                how='intersection'
+            )
+    
+            if not col_intersection.empty:
+                for _, cand in col_intersection.iterrows():
+                    geom = cand.geometry
+                    polys = list(geom.geoms) if geom.geom_type == 'MultiPolygon' else [geom]
+    
+                    for poly in polys:
+                        c_minx, c_miny, c_maxx, c_maxy = poly.bounds
+                        
+                        # Align the starting Y coordinate to a global grid based on the site's flat_pitch
+                        # This ensures rows are globally straight across different columns/polygons
+                        n_steps = math.ceil(max(0, c_miny - miny) / flat_pitch)
+                        y = miny + row_height_m / 2 + n_steps * flat_pitch
+    
+                        while y + row_height_m / 2 <= c_maxy:
+                            row_pitch = flat_pitch
+                            
+                            half_len = table_ew_width / 2
+                            half_h = row_height_m / 2
+                            row_center_x = x + table_ew_width / 2
+    
+                            row_rect = Polygon([
+                                (row_center_x - half_len, y - half_h),
+                                (row_center_x + half_len, y - half_h),
+                                (row_center_x + half_len, y + half_h),
+                                (row_center_x - half_len, y + half_h),
+                            ])
+    
+                            if poly.contains(row_rect.centroid):
+                                overlap = poly.intersection(row_rect)
+                                if overlap.area / row_rect.area >= 0.50:
+                                    terrain_ok, slope_val = _check_row_terrain(row_rect, terrain_srcs, config)
+                                    if terrain_ok:
+                                        all_candidate_rows.append({
+                                            "geometry": row_rect,
+                                            "slope_deg": round(slope_val, 2),
+                                            "strings": strings_per_row,
+                                            "paddock_id": cand.get("paddock_id", "P000")
+                                        })
+                                    else:
+                                        dropped_terrain += 1
                                 else:
-                                    dropped_terrain += 1
+                                    dropped_overlap += 1
                             else:
-                                dropped_overlap += 1
-                        else:
-                            dropped_centroid += 1
-                        y += row_pitch
-        
-        # Advance X for the next column 
-        x += table_ew_width + inter_table_gap_m
+                                dropped_centroid += 1
+                            y += row_pitch
+            
+            # Advance X for the next column 
+            x += table_ew_width + inter_table_gap_m
     
     logger.info(f"  Row gen stats: {dropped_centroid} dropped (centroid out), {dropped_overlap} dropped (overlap < 50%), {dropped_terrain} dropped (terrain constraints)")
 

@@ -1,8 +1,8 @@
 # PV Layout Engine
 
-An industry-grade geospatial pipeline for utility-scale solar plant early-stage development, terrain analysis, and conceptual engineering layout generation.
+**Disclaimer**: This engine is a **conceptual layout and feasibility analysis tool for early-stage utility-scale solar project development**. It explores bounding boxes, yields, and layout optimization using public constraint datasets to provide conceptual engineering layouts. It generates real geometries, terrain analysis, and estimates capacity, but is not a substitute for detailed, certified engineering design.
 
-This engine transforms unrefined site boundaries into full conceptual engineering layouts using public global datasets, automatically generated PV row geometries, and terrain-aware routing algorithms.
+An industry-grade geospatial pipeline that transforms unrefined site boundaries into conceptual engineering layouts using public global datasets, dynamic PV row generation, and terrain-aware algorithms.
 
 ---
 
@@ -10,48 +10,48 @@ This engine transforms unrefined site boundaries into full conceptual engineerin
 
 ### 📡 Data Acquisition & Validation
 
-- **OpenTopography DEMs:** Automatic fetching of COP30/COP90 elevation models with multi-attempt retry logic and resolution validation.
+- **OpenTopography DEMs:** Automatic fetching of COP30/COP90 elevation models with multi-attempt retry logic and cubic sub-grid resampling validation.
 - **ESA WorldCover (10m):** Direct S3 downloads of Land Use/Land Cover tiles for automated exclusion zones (forests, water, urban, etc.).
-- **OpenStreetMap Constraints:** Extraction of infrastructure (roads, buildings, waterways, powerlines) with configurable setbacks.
-- **Data Caching:** MD5-hashed caching to accelerate multi-run iterations on identical sites.
+- **OpenStreetMap Constraints:** Extraction of infrastructure (roads, buildings, waterways, powerlines) with configurable polygon setbacks.
+- **Data Caching:** MD5-hashed caching to accelerate iterative pipeline runs on identical boundaries.
 
 ### ⛰️ Advanced Terrain Analytics
 
-- **Projected Metric Analysis:** Automatically detects and projects data to the appropriate local UTM zone for accurate metric calculations.
-- **Topographic Derivatives:** Generates Slope, Aspect, Curvature, Terrain Ruggedness Index (TRI), and Hillshade.
-- **Hydrology & Flood Risk (PySheds):** Natively calculates Topographic Wetness Index (TWI) and D8 Flow Accumulation catchments to automatically generate exclusion buffers around likely stream channels and ravines.
-- **Structural Slope Geometry:** Classifies terrain gradients directly against panel row azimuths to generate **Across-row vs Along-row slope gradients** to inform earthworks and tracker viability.
-- **TPI Exclusions:** Utilizes a Topographic Position Index (TPI) to detect deep valleys/channels without relying on OSM vector data. _Configured for commercial utility-scale tolerances (e.g., -2.0m valley threshold, 1.5m TRI)._
-- **Solar Suitability Scoring:** Produces a 0–100 spatial score raster weighting slope thresholds, TRI, and hemisphere-aware north-facing penalties.
+- **Projected Metric Analysis:** Automatically detects and projects data to the appropriate local UTM zone for accurate metric geometry calculations.
+- **Topographic Derivatives:** Generates explicit Slope, Aspect, Curvature, Terrain Ruggedness Index (TRI), and Hillshade models.
+- **Hydrology & Flood Risk (PySheds):** Computes Topographic Wetness Index (TWI) and D8 Flow Accumulation catchments to automatically generate exclusion buffers against ravines and likely stream networks.
+- **TPI Exclusions:** Utilizes Topographic Position Index (TPI) to detect deep channels independent of OSM vector data.
+- **Solar Suitability Scoring:** Produces a 0–100 spatial score evaluating slope thresholds, TRI constraints, and northern-hemisphere-aware aspect penalties.
 
-### 🏗️ Solar Layout & BOP Siting
+### 🏗️ Conceptual Layout Generation & BOP Siting
 
-- **Multi-Criteria Substation Placement:** Siting logic evaluates 5 criteria (20% weight each): flat terrain, centroid proximity, road access, flood risk avoidance, and buildability.
-- **Substation & BOP Siting:** Multi-criteria siting evaluates terrain, proximity, and access. Automatically reserves space for Substation, BESS, and O&M compounds _before_ panel placement.
-- **2D Spatial Clustering:** Generates PV blocks (e.g., 3.2 MWac) using global region-growing adjacency to maximize contiguous buildable area across road boundaries.
-- **Intra-Block Access Canyons:** Automatically carves 6m-wide internal access roads through the heart of utility blocks, centering the Virtual Central Skids for commercial-grade O&M access.
-- **Exact Target Capacity Enforcement:** Intelligent block selection prioritizes the flattest terrain and best proximity to the POI, dynamically truncating the final block at the sub-string level to precisely meet the requested MW capacity without stranding valid land.
+- **Substation & BOP Siting (Feedback Loop):**
+  - Substation sites are selected before panel layout using multi-criteria suitability (Terrain Flatness: 30%, Proximity to POI: 20%, Buildable Coverage: 20%, Road Access / Water Avoidance: 15% each).
+  - Reserves footprints for Substation, BESS, and O&M compounds.
+  - **R3 Feedback Loop**: Evaluates the electrical center of gravity post-generation and re-sites the BOP zone dynamically if cable run distances exceed configurable thresholds.
+- **Contiguous Block Generation:** Generates conceptual 3.2 MWac utility blocks. Replaced legacy clustering with terrain-respecting region-growing algorithms to aggressively maximize target capacity contiguousness.
+- **Exact Target Capacity Optimization:** Dynamically prioritizes string and table alignment to hit target requested AC MW exactly without unnecessarily consuming usable land.
+- **Optional Terrain Aisles:** Supports terrain-aligned tertiary access aisles configurable to split structural array generation.
 
 ### ⚡ Infrastructure Routing
 
-- **Terrain-Aware A\* Spine Road:** Generates the primary "main collector" using a 10m-resolution A\* pathfinder that respects terrain gradients and exclusion boundaries.
-- **Herringbone Comb Branches:** Secondary corridors branch perpendicularly from the spine, creating a high-fidelity road network.
-- **Daisy-Chain MV Cables:** 33 kV medium-voltage cables string block transformers together in a daisy-chain topology along the physical road graph, accurately representing real-world commercial collection systems.
+- **Terrain-Aware A\* Road Construction:** Generates A\* navigational corridors for primary "spine" collectors utilizing a highly configurable cost grid respecting terrain gradients (>5% penalty).
+- **Geometric Corridors:** Reserves straight, buffered line corridors extracted directly from the buildable area prior to layout generation, preventing overlapped modules.
+- **Daisy-Chain MV Feeder Routing:** Routes 33 kV medium-voltage lines topologically referencing the created physical road network (daisy-chain) utilizing NetworkX. Applies IEC standard capacity limits for sizing and computing voltage drop (≤3%).
 
 ### 📊 Reporting & Economics
 
-- **Engineering Report:** Generates a comprehensive Markdown report including DC/AC ratio, GCR, component counts, and a detailed constraints breakdown.
-- **CAPEX Economic Scoring:** Calculates Blended CAPEX and Specific CAPEX ($/Wdc) using configurable unit costs for Modules, Inverters, Roads, MV Cables, and Earthworks.
-- **Civil Earthworks Estimation:** Rough Cut/Fill volume (m³) calculation using planar fit analysis over block areas.
-- **Yield Integration:** Estimated annual energy yield (P50/P90) via NREL PVWatts API.
-- **Visual Assets:** Exports 10+ GIS layers (GeoJSON, GPKG), high-resolution static maps, and interactive HTML dashboards.
+- **Bankable Yield Modelling (PySheds):** Employs a robust 3-tier energy simulation pipeline ranging from a high-fidelity PySAM simulator (shade/slope aware), falling back to NREL PVWatts SDK, and a local latitude proxy for offline usage.
+- **CAPEX Economics:** Generates complete Blended CAPEX and Specific CAPEX ($/Wdc) using detailed unit pricing models for Modules, Inverters, Earthworks, and Cabling.
+- **Civil Earthworks Estimates:** Resolves rough cut/fill calculations against the underlying 10m topological surface.
+- **Full Report and Visual Assets:** Emits HTML folium maps, GeoJSON layers, QGIS-ready GeoPackages, and comprehensive tabular markdown reports breaking down exclusions, blocks, strings, feeders, and financials.
 
 ---
 
 ## 🛠️ Requirements
 
-The project uses a standard Python virtual environment and relies on the geospatial Python stack:
-`geopandas`, `rasterio`, `pysheds`, `osmnx`, `networkx`, `shapely`, `pyyaml`, `scipy`, `requests`, `python-dotenv`.
+The project uses a standard Python virtual environment and heavily relies on the scientific geospatial ecosystem:
+`geopandas`, `rasterio`, `pysheds`, `osmnx`, `networkx`, `shapely`, `pyyaml`, `scipy`, `requests`, `python-dotenv`, `nrel-pysam`.
 
 ## ⚙️ Installation
 
@@ -75,33 +75,41 @@ The project uses a standard Python virtual environment and relies on the geospat
    OPENTOPOGRAPHY_API_KEY=your_key_here
    NASA_EARTHDATA_USER=your_user
    NASA_EARTHDATA_PASSWORD=your_password
-   PVWATTS_API_KEY=your_nrel_key (optional)
+   NREL_API_KEY=your_key_here (optional, for PVWatts fallback)
    ```
 
 ## ⌨️ Usage
 
-Run the pipeline by pointing to a site boundary vector file (GeoPackage, GeoJSON, or Shapefile) and providing the target capacity in MW DC.
+Run the pipeline by pointing to a site boundary vector file (GeoPackage, GeoJSON, or Shapefile) and providing the conceptual target layout capacity in MW DC or AC MW threshold.
 
 ```bash
-python main_pipeline.py inputs/project_boundary.gpkg 60.0
+python main_pipeline.py inputs/project_boundary.gpkg 60.0 --config config/config.yaml
 ```
 
 ## 📂 Output Structure
 
-Results are stored in `outputs/`:
+Execution writes highly specific spatial metrics into `outputs/`:
 
-- `outputs/layout.gpkg`: Unified spatial database of all site infrastructure.
-- `outputs/engineering_report.md`: Tabulated feasibility metrics, exclusions, and earthworks.
-- `outputs/interactive_map.html`: Web-based view of the complete layout.
-- `outputs/*_map.png`: Visual renderings of layout, slope, and suitability.
+- `outputs/layout.gpkg`: Unified spatial database hosting block, road, compound, constraint, and cable geometries.
+- `outputs/engineering_report.md`: Extensive textual synthesis containing economic metrics, equipment counts, exclusions, and yields.
+- `outputs/interactive_map.html`: Interactive leaflet-style map summarizing the generated geometries.
+- `outputs/*_map.png`: Graphical output maps visualizing localized slope profiles relative to placement points.
 
 ---
 
 ## ⚖️ Standards Compliance
 
-The engine follows international engineering best practices including:
+Configurable parameters are currently defaulted to adhere to foundational engineering limits (South East Asian considerations):
 
-- **IEC 60364-7-712**: Solar PV power supply systems.
-- **IEC 61936-1**: Power installations exceeding 1 kV a.c. (Substation clearances).
-- **IRENA/IEA-PVPS**: Utility-scale PV design concepts and O&M sizing.
-- **ADB Environmental Safeguards**: Watercourse and social infrastructure setbacks.
+- **IEC 60364-7-712**: Solar PV power supply systems
+- **IEC 60502-2 / 60287**: MV cable conductor sizing and trench limits
+- **IEC 61936-1**: Substation high-voltage placement tolerances
+- **ADB Environmental Safeguards**: Mandatory public infrastructure & river boundary exclusions
+
+---
+
+## 📄 License
+
+**Proprietary and Confidential**
+
+This software, including all its methodologies, algorithms, and models, is the property of its respective owners. Unauthorized copying, distribution, or use of this software, via any medium, is strictly prohibited without express written permission.

@@ -248,6 +248,14 @@ def _generate_tertiary_aisles(buildable_geom, terrain_paths, config):
     minx, miny, maxx, maxy = buildable_geom.bounds
     slope_path = terrain_paths.get("slope") if terrain_paths else None
 
+    import rasterio
+    slope_src = None
+    if slope_path:
+        try:
+            slope_src = rasterio.open(slope_path)
+        except Exception:
+            pass
+
     aisle_polys = []
     aisle_lines = []
 
@@ -269,7 +277,7 @@ def _generate_tertiary_aisles(buildable_geom, terrain_paths, config):
             best_slope = float("inf")
             best_cx = cx_min + cell_width / 2  # centroid fallback
 
-            if slope_path:
+            if slope_src:
                 n_candidates = max(1, int(cell_width / search_step))
                 for k in range(n_candidates):
                     cand_x = cx_min + (k + 0.5) * (cell_width / n_candidates)
@@ -280,7 +288,7 @@ def _generate_tertiary_aisles(buildable_geom, terrain_paths, config):
                     ).intersection(buildable_geom)
                     if strip.is_empty:
                         continue
-                    slope_val = _srm(strip, slope_path)
+                    slope_val = _srm(strip, slope_src)
                     if slope_val is not None and slope_val < best_slope:
                         best_slope = slope_val
                         best_cx = cand_x
@@ -302,6 +310,9 @@ def _generate_tertiary_aisles(buildable_geom, terrain_paths, config):
 
             y += cell_ns_depth
         x += table_ew_width
+        
+    if slope_src:
+        slope_src.close()
 
     logger.info(
         f"  Tertiary aisles: {len(aisle_polys)} terrain-guided aisles generated "

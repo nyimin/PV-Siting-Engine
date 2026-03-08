@@ -171,6 +171,11 @@ solar:
   gcr: 0.38
   tracking: fixed
   max_azimuth_deviation_deg: 15
+  # Winter Solstice Shading Parameters
+  # Used to dynamically calculate minimum row pitch for fixed-tilt 2P portrait systems.
+  # Design time: 10:00 AM Solar Time.
+  sun_hour_angle_deg: 30.0 # 15 degrees per hour from solar noon (12:00 PM - 10:00 AM = 2 hours = 30 deg)
+  solar_declination_deg: -23.45 # December 21st
 
 block:
   inverters_per_block: 10

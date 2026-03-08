@@ -14,18 +14,7 @@ logger = logging.getLogger("PVLayoutEngine.bop")
 # Internal helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _sample_slope_at_point(pt, slope_path):
-    """Samples slope value at a point from the slope raster."""
-    try:
-        import rasterio
-        with rasterio.open(slope_path) as src:
-            row, col = src.index(pt.x, pt.y)
-            if 0 <= row < src.height and 0 <= col < src.width:
-                val = src.read(1, window=rasterio.windows.Window(col, row, 1, 1))[0, 0]
-                return float(val) if not np.isnan(val) else None
-    except Exception:
-        pass
-    return None
+from utils.raster_helpers import sample_raster_point
 
 
 def _compute_compound_footprint(centre_pt, ux, uy, config):
@@ -77,7 +66,7 @@ def _compute_compound_footprint(centre_pt, ux, uy, config):
     return footprint
 
 
-def _score_candidate(pt, footprint_geom, buildable_geom, slope_path,
+def _score_candidate(pt, footprint_geom, buildable_geom, slope_src,
                      roads_geom, water_geom, reference_pt,
                      boundary_length, weights, max_compound_slope_deg):
     """Score a single candidate substation point.
@@ -89,10 +78,10 @@ def _score_candidate(pt, footprint_geom, buildable_geom, slope_path,
 
     # ── 1. Terrain slope score (scored over compound footprint, not just a point) ──
     footprint_slope = None
-    if slope_path:
-        footprint_slope = sample_raster_mean(footprint_geom, slope_path)
-    if footprint_slope is None:
-        footprint_slope = _sample_slope_at_point(pt, slope_path) if slope_path else None
+    if slope_src:
+        footprint_slope = sample_raster_mean(footprint_geom, slope_src)
+    if footprint_slope is None and slope_src:
+        footprint_slope = sample_raster_point(pt, slope_src)
 
     score_slope = 100.0
     if footprint_slope is not None:
@@ -237,41 +226,58 @@ def _select_substation_point(site_gdf, buildable_area_gdf, exclusions_gdf,
     if not candidates:
         return buildable_geom.centroid, None
 
+    import rasterio
+    import os
+    slope_src = None
+    aspect_src = None
+    if slope_path:
+        try:
+            slope_src = rasterio.open(slope_path)
+            aspect_path = slope_path.replace("slope.tif", "aspect.tif")
+            if os.path.exists(aspect_path):
+                aspect_src = rasterio.open(aspect_path)
+        except Exception:
+            pass
+
     # ── Evaluate each candidate (Tasks 2.2, 2.3, 2.4) ──
     best_score = -1
     best_pt = None
     best_slope = None
 
-    for pt in candidates:
-        # Task 2.4: Terrain-aware orientation — compute aspect at candidate
-        # to orient compounds perpendicular to steepest descent.
-        ux, uy = _compute_inward_direction(pt, buildable_geom, slope_path, site_centroid)
-
-        # Build the compound footprint for this candidate
-        footprint = _compute_compound_footprint(pt, ux, uy, config)
-
-        score, local_slope = _score_candidate(
-            pt, footprint, buildable_geom, slope_path,
-            roads_geom, water_geom, reference_pt,
-            boundary_length, weights, max_compound_slope
-        )
-
-        if score is not None and score > best_score:
-            best_score = score
-            best_pt = pt
-            best_slope = local_slope
+    try:
+        for pt in candidates:
+            # Task 2.4: Terrain-aware orientation — compute aspect at candidate
+            # to orient compounds perpendicular to steepest descent.
+            ux, uy = _compute_inward_direction(pt, site_centroid, aspect_src)
+    
+            # Build the compound footprint for this candidate
+            footprint = _compute_compound_footprint(pt, ux, uy, config)
+    
+            score, local_slope = _score_candidate(
+                pt, footprint, buildable_geom, slope_src,
+                roads_geom, water_geom, reference_pt,
+                boundary_length, weights, max_compound_slope
+            )
+    
+            if score is not None and score > best_score:
+                best_score = score
+                best_pt = pt
+                best_slope = local_slope
+    finally:
+        if slope_src: slope_src.close()
+        if aspect_src: aspect_src.close()
 
     if best_pt is None:
         # All candidates rejected — fall back to lowest-slope boundary point
         logger.warning("  All BOP candidates rejected by footprint validation. "
                        "Falling back to lowest-slope buildable point.")
         best_pt = buildable_geom.centroid
-        best_slope = _sample_slope_at_point(best_pt, slope_path) if slope_path else None
+        best_slope = sample_raster_point(best_pt, slope_path) if slope_path else None
 
     return best_pt, best_slope
 
 
-def _compute_inward_direction(pt, buildable_geom, slope_path, site_centroid):
+def _compute_inward_direction(pt, site_centroid, aspect_src=None):
     """Determine the inward direction for compound orientation.
 
     Task 2.4: If slope data is available, orient perpendicular to the steepest
@@ -287,17 +293,12 @@ def _compute_inward_direction(pt, buildable_geom, slope_path, site_centroid):
 
     ux_default, uy_default = dx / mag, dy / mag
 
-    if slope_path is None:
+    if aspect_src is None:
         return ux_default, uy_default
 
     # Sample aspect at candidate to get slope direction
     try:
-        import os
-        aspect_path = slope_path.replace("slope.tif", "aspect.tif")
-        if not os.path.exists(aspect_path):
-            return ux_default, uy_default
-
-        aspect_val = sample_raster_mean(pt.buffer(30), aspect_path)
+        aspect_val = sample_raster_mean(pt.buffer(30), aspect_src)
         if aspect_val is None:
             return ux_default, uy_default
 
@@ -357,18 +358,24 @@ def _build_compound_polygons(centre_pt, crs, config, slope, site_centroid=None,
     cx, cy = centre_pt.x, centre_pt.y
 
     # Task 2.4: Terrain-aware orientation
-    if buildable_geom is not None and site_centroid is not None:
-        ux, uy = _compute_inward_direction(centre_pt, buildable_geom, slope_path, site_centroid)
-    elif site_centroid is not None:
-        dx = site_centroid.x - cx
-        dy = site_centroid.y - cy
-        mag = np.hypot(dx, dy)
-        if mag > 0:
-            ux, uy = dx / mag, dy / mag
-        else:
-            ux, uy = 0.0, -1.0
+    
+    import rasterio, os
+    aspect_src = None
+    if slope_path:
+        aspect_path = slope_path.replace("slope.tif", "aspect.tif")
+        if os.path.exists(aspect_path):
+            try:
+                aspect_src = rasterio.open(aspect_path)
+            except Exception:
+                pass
+                
+    if site_centroid is not None:
+        ux, uy = _compute_inward_direction(centre_pt, site_centroid, aspect_src)
     else:
         ux, uy = 0.0, -1.0
+        
+    if aspect_src:
+        aspect_src.close()
 
     px, py = -uy, ux  # perpendicular axis
 
