@@ -8,6 +8,10 @@ import argparse
 import geopandas as gpd
 from pyproj import CRS
 from shapely.geometry import Point
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 from utils.config_loader import load_config, setup_logging
 from terrain.dem_downloader import fetch_dem
@@ -23,6 +27,39 @@ from layout.substation_placement import reserve_bop_zone
 from layout.corridor_planner import plan_corridors
 from analysis.metrics import compile_metrics, generate_report
 from visualization.map_generator import save_gis_layers, create_layout_map, create_interactive_map, create_terrain_maps
+
+
+def apply_bop_guard(rows_gdf, blocks_gdf, bop_zone_gdf):
+    """Post-generation guard: drop any PV rows whose geometries physically overlap the BOP polygon."""
+    try:
+        from shapely.validation import make_valid
+        import logging
+        bop_logger = logging.getLogger("PVLayoutEngine")
+        
+        if bop_zone_gdf is None or bop_zone_gdf.empty:
+            return blocks_gdf, rows_gdf
+            
+        bop_union = make_valid(bop_zone_gdf.geometry.union_all())
+        
+        before = len(rows_gdf)
+        rows_gdf = rows_gdf[~rows_gdf.geometry.intersects(bop_union)].copy()
+        removed = before - len(rows_gdf)
+        if removed > 0:
+            bop_logger.info(f"  Removed {removed} PV rows that geometrically overlapped BOP zone.")
+            
+            # Explicitly clip the block geometries so they don't visually overlap the BOP
+            blocks_gdf["geometry"] = blocks_gdf.geometry.difference(bop_union)
+            # Drop any blocks that were completely consumed
+            blocks_gdf = blocks_gdf[~blocks_gdf.is_empty].copy()
+            
+            # Purge orphaned blocks
+            valid_blocks = set(rows_gdf["block_id"].unique())
+            blocks_gdf = blocks_gdf[blocks_gdf["block_id"].isin(valid_blocks)].copy()
+    except Exception as e:
+        import logging
+        logging.getLogger("PVLayoutEngine").warning(f"  BOP row guard failed: {e}")
+    return blocks_gdf, rows_gdf
+
 
 
 def _determine_utm_crs(site_gdf):
@@ -204,27 +241,7 @@ def run_pipeline(input_boundary_path, requested_mw, config_path="config/config.y
 
     blocks_gdf, rows_gdf, _ = generate_solar_blocks(corridor_reduced_gdf, config, terrain_paths)
 
-    # ── Post-generation BOP guard: drop any PV rows whose centroid falls inside
-    #    the BOP zone. The block generator works at polygon level and edge rows
-    #    can straddle the BOP boundary even after buildable area subtraction.
-    try:
-        from shapely.ops import unary_union as _uu
-        bop_union = _uu(
-            list(substation_gdf.geometry) +
-            list(bess_gdf.geometry) +
-            list(om_gdf.geometry) +
-            list(guard_gdf.geometry)
-        )
-        before = len(rows_gdf)
-        rows_gdf = rows_gdf[~rows_gdf.geometry.intersects(bop_union)].copy()
-        removed = before - len(rows_gdf)
-        if removed > 0:
-            logger.info(f"  Removed {removed} PV rows that geometrically overlapped BOP zone.")
-            # Also purge orphaned blocks (blocks with no rows left)
-            valid_blocks = set(rows_gdf["block_id"].unique())
-            blocks_gdf = blocks_gdf[blocks_gdf["block_id"].isin(valid_blocks)].copy()
-    except Exception as e:
-        logger.warning(f"  BOP row guard failed: {e}")
+    blocks_gdf, rows_gdf = apply_bop_guard(rows_gdf, blocks_gdf, bop_zone_gdf)
 
 
     # ========== PHASE 7: BALANCE OF PLANT EQUIPMENT ==========
@@ -278,7 +295,7 @@ def run_pipeline(input_boundary_path, requested_mw, config_path="config/config.y
                     bop_zone_gdf, reduced_buildable_gdf
                 ) = reserve_bop_zone(
                     site_gdf, buildable_gdf, exclusions_gdf, cfg_override,
-                    slope_path=slope_path, poi_coord=(cx_ecg, cy_ecg)
+                    slope_path=slope_path, poi_coord=poi_coord, ecg_coord=(cx_ecg, cy_ecg)
                 )
 
                 # Re-run corridors + block layout from the new BOP footprint
@@ -289,6 +306,10 @@ def run_pipeline(input_boundary_path, requested_mw, config_path="config/config.y
                 blocks_gdf, rows_gdf, _ = generate_solar_blocks(
                     corridor_reduced_gdf, cfg_override, terrain_paths
                 )
+                
+                # RE-APPLY post-generation BOP guard against the newly sited BOP compound
+                blocks_gdf, rows_gdf = apply_bop_guard(rows_gdf, blocks_gdf, bop_zone_gdf)
+                
                 inverters_gdf, transformers_gdf = place_inverters_and_transformers(
                     blocks_gdf, rows_gdf, cfg_override, sub_pt,
                     corridor_info=corridor_info
@@ -309,6 +330,46 @@ def run_pipeline(input_boundary_path, requested_mw, config_path="config/config.y
         buildable_area_gdf=corridor_reduced_gdf,
         corridor_info=corridor_info
     )
+
+    # RE-APPLY post-generation guard to ensure branch roads do not mathematically overlap PV rows
+    if roads_gdf is not None and not roads_gdf.empty and not rows_gdf.empty:
+        try:
+            from shapely.validation import make_valid
+            road_surfaces = []
+            for _, r in roads_gdf.iterrows():
+                w = r.get("road_width_m", 4)
+                # Ensure geometry is valid and buffer it by half-width to get surface (round ends to clear overlaps)
+                road_surfaces.append(make_valid(r.geometry).buffer(w / 2.0))
+            
+            road_union = gpd.GeoSeries(road_surfaces).union_all()
+            
+            # Clip PV rows
+            rows_gdf["geometry"] = rows_gdf.geometry.difference(road_union)
+            rows_gdf = rows_gdf[~rows_gdf.is_empty].copy()
+            
+            # Clip PV blocks
+            blocks_gdf["geometry"] = blocks_gdf.geometry.difference(road_union)
+            blocks_gdf = blocks_gdf[~blocks_gdf.is_empty].copy()
+            logger.info("  Clipped PV rows/blocks against final road surfaces to eliminate geometric overlaps.")
+        except Exception as e:
+            logger.warning(f"  Failed to cleanly clip roads from PV blocks: {e}")
+
+
+    # ========== PHASE 7.5: HV TRANSMISSION LINE ==========
+    transmission_gdf = None
+    if sub_pt is not None and poi_coord is not None:
+        try:
+            from shapely.geometry import LineString
+            tx_line = LineString([(sub_pt.x, sub_pt.y), (poi_coord[0], poi_coord[1])])
+            transmission_gdf = gpd.GeoDataFrame([{
+                "cable_type": "HV_Transmission",
+                "voltage_kv": 66,
+                "length_m": round(tx_line.length, 1),
+                "geometry": tx_line
+            }], crs=output_crs)
+            logger.info(f"  Routed HV transmission line to POI: {tx_line.length:.0f}m")
+        except Exception as e:
+            logger.warning(f"  Failed to route HV transmission line to POI: {e}")
 
     # ========== PHASE 8: EXPORTS & REPORTING ==========
     logger.info("=" * 50)
@@ -331,18 +392,20 @@ def run_pipeline(input_boundary_path, requested_mw, config_path="config/config.y
                     internal_roads=roads_gdf,
                     mv_cables=mv_cables_gdf,
                     lv_cables=lv_cables_gdf,
+                    transmission_line=transmission_gdf,
                     corridors=corridor_gdf)
 
     # Generate Layout Map
     create_layout_map(site_gdf, buildable_gdf, blocks_gdf, rows_gdf,
                       inverters_gdf, transformers_gdf, substation_gdf, bess_gdf,
-                      roads_gdf, mv_cables_gdf, lv_cables_gdf, output_dir)
+                      roads_gdf, mv_cables_gdf, lv_cables_gdf, output_dir,
+                      transmission_gdf=transmission_gdf)
 
     # Generate Interactive HTML Map
     create_interactive_map(site_gdf, buildable_gdf, blocks_gdf, rows_gdf,
                            inverters_gdf, transformers_gdf, substation_gdf, bess_gdf,
                            roads_gdf, mv_cables_gdf, lv_cables_gdf, output_dir,
-                           om_gdf=om_gdf, guard_gdf=guard_gdf)
+                           om_gdf=om_gdf, guard_gdf=guard_gdf, transmission_gdf=transmission_gdf)
 
     # Generate Terrain Maps
     if terrain_paths:

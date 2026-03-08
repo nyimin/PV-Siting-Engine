@@ -371,18 +371,13 @@ def route_access_roads(blocks_gdf, substation_point, config, terrain_paths=None,
         # A* Grid Search from transformer to nearest branch corridor
         # Start and end snap handling
         try:
-            start_x_idx, start_y_idx = grid.get_grid_indices(origin_pt)
-            end_x_idx,   end_y_idx   = grid.get_grid_indices(target_pt)
-            
             # Use A* to find path
-            path_indices = _astar(grid, start_x_idx, start_y_idx, end_x_idx, end_y_idx)
-            if not path_indices:
+            branch_line = grid.astar(origin_pt, target_pt)
+            if branch_line.is_empty:
                 raise ValueError("A* could not find a path")
-                
-            # Convert grid indices back to real-world coordinates
-            coords = [(grid.minx + i * grid.cell_size + grid.cell_size/2,
-                       grid.miny + j * grid.cell_size + grid.cell_size/2) 
-                      for (i, j) in path_indices]
+            
+            # Extract coordinates for simplification if needed
+            coords = list(branch_line.coords)
             
             # Force exact connections to avoid graph disconnections
             if len(coords) > 1:
@@ -425,6 +420,17 @@ def route_access_roads(blocks_gdf, substation_point, config, terrain_paths=None,
             "corridor_branch_id": f"BRANCH_{j+1:02d}",
             "length_m": round(bline.length, 1),
         })
+
+    # 4c. Add tertiary aisles
+    if corridor_info and "tertiary_aisle_lines" in corridor_info:
+        for j, tline in enumerate(corridor_info["tertiary_aisle_lines"]):
+            road_features.append({
+                "geometry": tline,
+                "road_type": "tertiary_aisle",
+                "block_id": f"TERTIARY_{j+1:02d}",
+                "corridor_branch_id": f"TERTIARY_{j+1:02d}",
+                "length_m": round(tline.length, 1),
+            })
 
     roads_gdf = gpd.GeoDataFrame(road_features, crs=crs)
 

@@ -406,6 +406,10 @@ def plan_corridors(buildable_area_gdf, substation_point, config, terrain_paths=N
             ux, uy = -ux, -uy
         spine_line = _extend_line_to_boundary(substation_point, (ux, uy), buildable_geom)
 
+    if spine_line is None or spine_line.is_empty:
+        logger.warning("  Could not generate valid spine line. Falling back to simple vertical segment.")
+        spine_line = LineString([substation_point, Point(substation_point.x, substation_point.y + 100)])
+
     spine_length = spine_line.length
     logger.info(f"  Main collector: {spine_length:.0f}m, "
                 f"corridor width: {main_corridor_width}m")
@@ -496,12 +500,15 @@ def plan_corridors(buildable_area_gdf, substation_point, config, terrain_paths=N
         logger.info("  Tertiary aisles disabled (roads.tertiary_aisles_enabled: false). "
                     "Intra-block roads will be carved geometrically post-layout.")
 
+    from shapely.validation import make_valid
+    buildable_geom = make_valid(buildable_geom)
+
     # ── Merge all corridors ──
     all_corridor_geoms = [spine_corridor] + branch_corridors + tertiary_aisle_polys
-    corridor_union = unary_union(all_corridor_geoms)
+    corridor_union = make_valid(unary_union(all_corridor_geoms))
 
     # Clip to buildable area
-    corridor_union = corridor_union.intersection(buildable_geom)
+    corridor_union = make_valid(corridor_union.intersection(buildable_geom))
 
     corridor_records = [{
         "corridor_type": "main_collector",
@@ -539,7 +546,8 @@ def plan_corridors(buildable_area_gdf, substation_point, config, terrain_paths=N
     logger.info(f"  Total corridor area: {total_corridor_ha:.2f} ha")
 
     # ── Task 3.3: Subtract corridors from buildable area ──
-    reduced_geom = buildable_geom.difference(corridor_union).buffer(0)
+    from shapely.validation import make_valid
+    reduced_geom = make_valid(buildable_geom).difference(make_valid(corridor_union)).buffer(0)
 
     if reduced_geom.is_empty:
         logger.warning("  Corridors consumed entire buildable area — "
@@ -567,16 +575,33 @@ def plan_corridors(buildable_area_gdf, substation_point, config, terrain_paths=N
 
     # ── Task 3.4: Block tessellation alignment info ──
     # Provide downstream block_generator with corridor alignment metadata
+    
+    # Clip lines for accurate downstream snapping
+    clipped_spine = spine_line.intersection(buildable_geom)
+    if clipped_spine.is_empty: clipped_spine = spine_line
+    
+    clipped_branches = []
+    for bl in branch_lines:
+        cbl = bl.intersection(buildable_geom)
+        if not cbl.is_empty:
+            clipped_branches.append(cbl)
+    
+    clipped_tertiary = []
+    for tl in tertiary_aisle_lines:
+        ctl = tl.intersection(buildable_geom)
+        if not ctl.is_empty:
+            clipped_tertiary.append(ctl)
+            
     corridor_info = {
-        "spine_line": spine_line,
+        "spine_line": clipped_spine,
         "spine_direction": (ux, uy),
         "spine_angle_deg": angle_deg,
-        "branch_lines": branch_lines,
+        "branch_lines": clipped_branches,
         "branch_spacing_m": branch_spacing,
         "main_collector_width_m": main_corridor_width,
         "branch_corridor_width_m": branch_corridor_width,
         # R2: terrain-guided tertiary aisle centrelines for downstream road snapping
-        "tertiary_aisle_lines": tertiary_aisle_lines,
+        "tertiary_aisle_lines": clipped_tertiary,
     }
 
     return corridor_gdf, reduced_buildable, corridor_info

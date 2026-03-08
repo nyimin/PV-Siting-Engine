@@ -46,7 +46,7 @@ def compile_metrics(site_gdf, buildable_gdf, exclusions_gdf, blocks_gdf, rows_gd
     centroid = site_wgs84.geometry.union_all().centroid
     lat, lon = centroid.y, centroid.x
 
-    annual_p50_mwh, annual_p90_mwh, spec_yield, pvwatts_used = calculate_yield(
+    annual_p50_mwh, annual_p90_mwh, spec_yield, yield_engine_used = calculate_yield(
         lat, lon, installed_dc_mw, config,
         rows_gdf=rows_gdf,
         slope_raster_path=terrain_paths.get("slope") if terrain_paths else None,
@@ -152,7 +152,7 @@ def compile_metrics(site_gdf, buildable_gdf, exclusions_gdf, blocks_gdf, rows_gd
         "annual_p50_yield_mwh": round(annual_p50_mwh, 2),
         "annual_p90_yield_mwh": round(annual_p90_mwh, 2),
         "specific_yield_kwh_kwp": round(spec_yield, 2),
-        "pvwatts_used_api": pvwatts_used,
+        "yield_engine_used": yield_engine_used,
         
         "ew_cut_m3": round(cut_m3, 2),
         "ew_fill_m3": round(fill_m3, 2),
@@ -251,7 +251,7 @@ def generate_report(metrics, output_dir):
                 exclusion_section += f"| {label} | {area} |\n"
 
         pvwatts_note = (
-            "" if metrics.get("pvwatts_used_api")
+            "" if metrics.get("yield_engine_used") != "proxy"
             else "\n> ⚠️ **Yield estimate uses latitude proxy — no API or PySAM available. "
                  "Set `yield.engine: pysam` and install `nrel-pysam`.**\n"
         )
@@ -259,9 +259,10 @@ def generate_report(metrics, output_dir):
         pvwatts_note = ""
 
     # Yield engine label for report header
+    engine_used_str = metrics.get("yield_engine_used", "proxy")
     yield_engine_label = (
-        "PySAM Pvsamv1 (3D shading)" if metrics.get("pvwatts_used_api") and metrics.get("annual_p50_yield_mwh", 0) > 0
-        else "PVWatts V8 API (lumped)" if metrics.get("pvwatts_used_api")
+        "PySAM Pvsamv1 (1D GCR Shading Approximation)" if engine_used_str == "pysam"
+        else "PVWatts V8 API (lumped)" if engine_used_str == "pvwatts"
         else "Latitude Proxy (offline fallback)"
     )
 

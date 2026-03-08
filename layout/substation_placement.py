@@ -68,7 +68,7 @@ def _compute_compound_footprint(centre_pt, ux, uy, config):
 
 def _score_candidate(pt, footprint_geom, buildable_geom, slope_src,
                      roads_geom, water_geom, reference_pt,
-                     boundary_length, weights, max_compound_slope_deg):
+                     boundary_length, weights, max_compound_slope_deg, ecg_pt=None):
     """Score a single candidate substation point.
 
     Returns (total_score, local_slope) or (None, None) if candidate is
@@ -99,6 +99,13 @@ def _score_candidate(pt, footprint_geom, buildable_geom, slope_src,
     dist_ref = pt.distance(reference_pt)
     normaliser = max(boundary_length / 4, 500)  # avoid division by tiny number
     score_proximity = max(0, 100 * (1 - dist_ref / normaliser))
+    
+    # Task 2.5: Blend with ECG (Electrical Center of Gravity) proximity if available
+    if ecg_pt is not None:
+        dist_ecg = pt.distance(ecg_pt)
+        score_ecg = max(0, 100 * (1 - dist_ecg / normaliser))
+        # Blend proximity: balances external POI pull vs internal array pull
+        score_proximity = (score_proximity + score_ecg) / 2.0
 
     # ── 3. Road proximity ──
     score_roads = 50.0
@@ -134,7 +141,7 @@ def _score_candidate(pt, footprint_geom, buildable_geom, slope_src,
 
 
 def _select_substation_point(site_gdf, buildable_area_gdf, exclusions_gdf,
-                             config, slope_path=None, poi_coord=None):
+                             config, slope_path=None, poi_coord=None, ecg_coord=None):
     """Select the best substation location using multi-criteria evaluation.
 
     Phase 2 improvements over the original:
@@ -186,6 +193,8 @@ def _select_substation_point(site_gdf, buildable_area_gdf, exclusions_gdf,
         reference_pt = Point(poi_coord)
     else:
         reference_pt = site_centroid
+        
+    ecg_pt = Point(ecg_coord) if ecg_coord else None
 
     # ── Task 2.1: Generate candidate points — boundary AND interior grid ──
     candidates = []
@@ -256,7 +265,7 @@ def _select_substation_point(site_gdf, buildable_area_gdf, exclusions_gdf,
             score, local_slope = _score_candidate(
                 pt, footprint, buildable_geom, slope_src,
                 roads_geom, water_geom, reference_pt,
-                boundary_length, weights, max_compound_slope
+                boundary_length, weights, max_compound_slope, ecg_pt
             )
     
             if score is not None and score > best_score:
@@ -446,7 +455,7 @@ def _build_compound_polygons(centre_pt, crs, config, slope, site_centroid=None,
 # ─────────────────────────────────────────────────────────────────────────────
 
 def reserve_bop_zone(site_gdf, buildable_area_gdf, exclusions_gdf, config,
-                     slope_path=None, poi_coord=None):
+                     slope_path=None, poi_coord=None, ecg_coord=None):
     """**Must run BEFORE generate_solar_blocks().**
 
     Workflow (mirrors PVcase / Helioscope BOP-first design):
@@ -466,7 +475,7 @@ def reserve_bop_zone(site_gdf, buildable_area_gdf, exclusions_gdf, config,
 
     # Step 1: Select substation point
     sub_pt, slope = _select_substation_point(
-        site_gdf, buildable_area_gdf, exclusions_gdf, config, slope_path, poi_coord
+        site_gdf, buildable_area_gdf, exclusions_gdf, config, slope_path, poi_coord, ecg_coord
     )
     slope_str = f", slope={slope:.1f}°" if slope else ""
     logger.info(f"  Substation sited at ({sub_pt.x:.1f}, {sub_pt.y:.1f}){slope_str}")
@@ -502,7 +511,8 @@ def reserve_bop_zone(site_gdf, buildable_area_gdf, exclusions_gdf, config,
     bop_raw_union = unary_union(all_compound_geoms).buffer(20.0)
 
     # Enforce compound boundary containment (Phase 1, Task 1.5)
-    buildable_union = buildable_area_gdf.geometry.union_all()
+    from shapely.validation import make_valid
+    buildable_union = make_valid(buildable_area_gdf.geometry.union_all())
 
     initial_inside = bop_raw_union.intersection(buildable_union).area
     coverage_pct = (initial_inside / bop_raw_union.area * 100) if bop_raw_union.area > 0 else 0
@@ -520,11 +530,31 @@ def reserve_bop_zone(site_gdf, buildable_area_gdf, exclusions_gdf, config,
         revised_coverage = (revised_inside / bop_raw_union.area * 100) if bop_raw_union.area > 0 else 0
         logger.info(f"  After shift: BOP zone now {revised_coverage:.1f}% inside buildable area")
 
+        # Now actually translate the component GDFs so they match the visual map and further logic!
+        def _translate_gdf(gdf, dx, dy):
+            if gdf is not None and not gdf.empty:
+                gdf["geometry"] = gdf.geometry.translate(xoff=dx, yoff=dy)
+            return gdf
+        
+        sub_gdf = _translate_gdf(sub_gdf, dx, dy)
+        bess_gdf = _translate_gdf(bess_gdf, dx, dy)
+        om_gdf = _translate_gdf(om_gdf, dx, dy)
+        guard_gdf = _translate_gdf(guard_gdf, dx, dy)
+        
+        # Substation point itself was used to generate this, we should shift it too if needed, but it's okay, 
+        # it was mostly used as an anchor.
+        if isinstance(sub_pt, Point):
+            sub_pt = _translate(sub_pt, xoff=dx, yoff=dy)
+        else:
+            sub_pt = (sub_pt[0] + dx, sub_pt[1] + dy)
+
         if revised_coverage < 60.0:
             logger.warning("  BOP zone has poor boundary fit even after shift — "
                            "compound shapes may be clipped.")
 
+    bop_raw_union = make_valid(bop_raw_union)
     bop_union = bop_raw_union.intersection(buildable_union)
+    bop_union = make_valid(bop_union)
 
     bop_zone_gdf = gpd.GeoDataFrame([{
         "compound_id": "BOP_ZONE",
@@ -540,7 +570,8 @@ def reserve_bop_zone(site_gdf, buildable_area_gdf, exclusions_gdf, config,
         return sub_pt, sub_gdf, bess_gdf, om_gdf, guard_gdf, bop_zone_gdf, buildable_area_gdf
 
     try:
-        reduced_geom = buildable_union.difference(bop_union)
+        from shapely.validation import make_valid
+        reduced_geom = make_valid(buildable_union).difference(make_valid(bop_union)).buffer(0)
 
         if reduced_geom.is_empty:
             logger.warning("  BOP zone consumed entire buildable area — using original.")

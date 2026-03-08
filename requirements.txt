@@ -15,3 +15,4 @@ tqdm
 python-dotenv
 folium
 scikit-learn
+nrel-pysam

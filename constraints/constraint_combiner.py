@@ -247,9 +247,9 @@ def combine_constraints(site_gdf, osm_exclusions, terrain_analysis_paths, config
 
     # 4.5 Hydrological Streams (D8 Flow Accumulation from PySheds)
     streams_path = terrain_analysis_paths.get("streams")
-    stream_buffer_m = buffers_cfg.get("streams_m", 30)  # Default 30m buffer for derived streams
+    stream_buffer_m = buffers_cfg.get("streams_m", 50)  # Default 50m setback for watercourses (ASEAN standard)
     if streams_path and os.path.exists(streams_path):
-        logger.info(f"  Applying D8 Flow Accumulation streams with {stream_buffer_m}m buffer...")
+        logger.info(f"  Applying D8 Flow Accumulation streams with {stream_buffer_m}m setback...")
         with rasterio.open(streams_path) as src:
             stream_mask = src.read(1).astype(np.uint8)
             stream_transform = src.transform
@@ -271,7 +271,7 @@ def combine_constraints(site_gdf, osm_exclusions, terrain_analysis_paths, config
                 all_exclusions.append(stream_gdf)
 
     # 5. Site boundary inward setback  (BD-03 — now reads from config)
-    setback_m = buffers_cfg.get("site_boundary_m", 10)
+    setback_m = buffers_cfg.get("site_boundary_m", 15) # Default 15m inward setback (ASEAN standard)
     if setback_m > 0:
         logger.info(f"  Applying {setback_m}m inward setback from site boundary...")
         site_geom = site_gdf.geometry.union_all()

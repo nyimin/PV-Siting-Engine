@@ -18,33 +18,34 @@ An industry-grade geospatial pipeline that transforms unrefined site boundaries 
 ### ⛰️ Advanced Terrain Analytics
 
 - **Projected Metric Analysis:** Automatically detects and projects data to the appropriate local UTM zone for accurate metric geometry calculations.
-- **Topographic Derivatives:** Generates explicit Slope, Aspect, Curvature, Terrain Ruggedness Index (TRI), and Hillshade models.
+- **Topographic Derivatives:** Generates explicit Slope (degrees), Aspect, Curvature, Terrain Ruggedness Index (TRI), and Hillshade models using Horn's method and Zevenbergen-Thorne algorithms.
 - **Hydrology & Flood Risk (PySheds):** Computes Topographic Wetness Index (TWI) and D8 Flow Accumulation catchments to automatically generate exclusion buffers against ravines and likely stream networks.
-- **TPI Exclusions:** Utilizes Topographic Position Index (TPI) to detect deep channels independent of OSM vector data.
-- **Solar Suitability Scoring:** Produces a 0–100 spatial score evaluating slope thresholds, TRI constraints, and northern-hemisphere-aware aspect penalties.
+- **TPI Exclusions:** Utilizes Topographic Position Index (TPI) to detect deep channels and ridges independent of OSM vector data.
+- **Solar Suitability Scoring:** Produces a 0–3 spatial score evaluating slope classes and northern/southern-hemisphere-aware aspect suitability.
 
 ### 🏗️ Conceptual Layout Generation & BOP Siting
 
-- **Substation & BOP Siting (Feedback Loop):**
-  - Substation sites are selected before panel layout using multi-criteria suitability (Terrain Flatness: 30%, Proximity to POI: 20%, Buildable Coverage: 20%, Road Access / Water Avoidance: 15% each).
-  - Reserves footprints for Substation, BESS, and O&M compounds.
-  - **R3 Feedback Loop**: Evaluates the electrical center of gravity post-generation and re-sites the BOP zone dynamically if cable run distances exceed configurable thresholds.
-- **Contiguous Block Generation:** Generates conceptual 3.2 MWac utility blocks. Replaced legacy clustering with terrain-respecting region-growing algorithms to aggressively maximize target capacity contiguousness.
-- **Exact Target Capacity Optimization:** Dynamically prioritizes string and table alignment to hit target requested AC MW exactly without unnecessarily consuming usable land.
-- **Optional Terrain Aisles:** Supports terrain-aligned tertiary access aisles configurable to split structural array generation.
+- **Multi-Criteria BOP Siting:**
+  - Substation, BESS, and O&M compounds are sited before panel layout using a weighted scoring grid (Terrain Flatness, POI Proximity, Buildable Coverage, Road Access, Water Avoidance).
+  - **Terrain-Aware Orientation:** Compounds are automatically oriented along contour lines to minimize civil grading.
+  - **R3 ECG Feedback Loop:** Evaluates the capacity-weighted Electrical Centre of Gravity (ECG) post-generation and re-sites the BOP zone if cable run distances exceed configurable thresholds.
+- **Road-First Tessellation:** Generates primary and secondary infrastructure corridors _before_ block generation to ensure dedicated, reserved space and eliminate overlaps.
+- **BFS Region-Growing Clustering:** Generates contiguous ~3.2 MWac utility blocks using adjacency-based grouping instead of arbitrary K-means.
+- **Exact Target Capacity Truncation:** Dynamically truncates block and row production to meet the target AC MW requested exactly, prioritizing flat terrain and proximity to BOP.
 
 ### ⚡ Infrastructure Routing
 
-- **Terrain-Aware A\* Road Construction:** Generates A\* navigational corridors for primary "spine" collectors utilizing a highly configurable cost grid respecting terrain gradients (>5% penalty).
-- **Geometric Corridors:** Reserves straight, buffered line corridors extracted directly from the buildable area prior to layout generation, preventing overlapped modules.
-- **Daisy-Chain MV Feeder Routing:** Routes 33 kV medium-voltage lines topologically referencing the created physical road network (daisy-chain) utilizing NetworkX. Applies IEC standard capacity limits for sizing and computing voltage drop (≤3%).
+- **Terrain-Aware A\* Road Routing:** Generates A\* navigational paths for branch roads and spine collectors utilizing a cost grid that penalizes gradients exceeding configurable thresholds (e.g., >5%).
+- **Road-Following MV Collection:** Routes 33 kV medium-voltage lines topologically referencing the physical road network.
+- **Daisy-Chain Topology:** Implements radial daisy-chaining of block transformers back to the substation with K-means spatial feeder grouping.
+- **IEC Cable Sizing:** Automatically selects XLPE Aluminium conductor sizes per feeder load and computes voltage drop (IEC 60502-2 / 60287).
 
-### 📊 Reporting & Economics
+### 📊 Reporting & Analytics
 
-- **Bankable Yield Modelling (PySheds):** Employs a robust 3-tier energy simulation pipeline ranging from a high-fidelity PySAM simulator (shade/slope aware), falling back to NREL PVWatts SDK, and a local latitude proxy for offline usage.
-- **CAPEX Economics:** Generates complete Blended CAPEX and Specific CAPEX ($/Wdc) using detailed unit pricing models for Modules, Inverters, Earthworks, and Cabling.
-- **Civil Earthworks Estimates:** Resolves rough cut/fill calculations against the underlying 10m topological surface.
-- **Full Report and Visual Assets:** Emits HTML folium maps, GeoJSON layers, QGIS-ready GeoPackages, and comprehensive tabular markdown reports breaking down exclusions, blocks, strings, feeders, and financials.
+- **Advanced Yield Simulation (PySAM):** Employs a robust simulation pipeline using the NREL PySAM engine (System Advisor Model) for P50 energy estimates, with fallback to PVWatts or local latitude proxies.
+- **CAPEX Economics:** Generates complete Blended CAPEX and Specific CAPEX ($/Wdc) using detailed unit pricing models.
+- **Civil Earthworks Estimates:** Resolves rough cut/fill volumes against the underlying 10m topological surface.
+- **Full GIS Portfolio:** Emits Folium interactive maps, GeoJSON layers, QGIS-ready GeoPackages, and comprehensive tabular reports.
 
 ---
 

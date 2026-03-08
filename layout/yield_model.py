@@ -61,7 +61,8 @@ def _run_pysam(lat, lon, dc_capacity_mw, config, rows_gdf, slope_raster_path):
 
     pv_cfg = config.get("solar", {})
     yield_cfg = config.get("yield", {})
-    api_key = config.get("api", {}).get("nrel_pvwatts", "DEMO_KEY")
+    import os
+    api_key = config.get("api", {}).get("nrel_pvwatts") or os.environ.get("PVWATTS_API_KEY", "DEMO_KEY")
 
     tilt = pv_cfg.get("tilt_deg", 26)
     azimuth = pv_cfg.get("azimuth_deg", 180)
@@ -82,7 +83,7 @@ def _run_pysam(lat, lon, dc_capacity_mw, config, rows_gdf, slope_raster_path):
                 workers=1,
                 resource_type="psm3-tmy",
                 resource_year="tmy",
-                resource_interval=60,
+                resource_interval_min=60,
                 nrel_api_key=api_key,
                 nrel_api_email="pvsam@layout.engine",
             )
@@ -92,6 +93,8 @@ def _run_pysam(lat, lon, dc_capacity_mw, config, rows_gdf, slope_raster_path):
             logger.info(f"  R4 PySAM: weather file: {weather_path}")
         except Exception as wx_err:
             logger.warning(f"  R4 PySAM: weather fetch failed ({wx_err}). Skipping PySAM path.")
+            if api_key == "DEMO_KEY":
+                logger.error("  -> This is likely due to NREL's 'DEMO_KEY' rate limits. Supply an API key in config.yaml under 'api.nrel_pvwatts' to use PySAM.")
             return None
 
         # ── System design ────────────────────────────────────────────────────
@@ -183,7 +186,7 @@ def _run_pysam(lat, lon, dc_capacity_mw, config, rows_gdf, slope_raster_path):
                     "shading:beam_angle": [[30.0] * 12],        # threshold angle (deg)
                     "shading:diff": [sf * 0.5 * 100.0] * 12,   # diffuse ~50% of beam loss
                 })
-                logger.info("  R4 PySAM: shading scene configured from row geometries.")
+                logger.info("  R4 PySAM: 1D Layout-derived GCR shading approximation configured.")
 
             except Exception as shade_err:
                 logger.warning(
@@ -219,7 +222,8 @@ def _run_pvwatts(lat, lon, dc_capacity_mw, config):
     azimuth = pv_config.get("azimuth_deg", 180)
     system_losses = pv_config.get("system_losses_percent", 14.0)
     url = "https://developer.nrel.gov/api/pvwatts/v8.json"
-    api_key = config.get("api", {}).get("nrel_pvwatts", "DEMO_KEY")
+    import os
+    api_key = config.get("api", {}).get("nrel_pvwatts") or os.environ.get("PVWATTS_API_KEY", "DEMO_KEY")
 
     params = {
         "api_key": api_key,
@@ -291,16 +295,16 @@ def calculate_yield(lat, lon, dc_capacity_mw, config,
     p50_yield_mwh : float
     p90_yield_mwh : float   (≈ P50 × 0.92)
     specific_yield_kwh_kwp : float
-    used_api : bool         True for PySAM and PVWatts paths, False for proxy.
+    engine_used : str     "pysam", "pvwatts", or "proxy"
     """
     if dc_capacity_mw <= 0:
-        return 0.0, 0.0, 0.0, False
+        return 0.0, 0.0, 0.0, "proxy"
 
     dc_capacity_kw = dc_capacity_mw * 1000.0
     yield_engine = config.get("yield", {}).get("engine", "pysam")
 
     p50_yield_mwh = None
-    used_api = False
+    engine_used = "proxy"
 
     # ── Path A: PySAM ──────────────────────────────────────────────────────
     if yield_engine in ("pysam", "auto"):
@@ -308,23 +312,23 @@ def calculate_yield(lat, lon, dc_capacity_mw, config,
             lat, lon, dc_capacity_mw, config, rows_gdf, slope_raster_path
         )
         if p50_yield_mwh is not None:
-            used_api = True
+            engine_used = "pysam"
 
     # ── Path B: PVWatts API fallback ───────────────────────────────────────
     if p50_yield_mwh is None and yield_engine != "proxy":
         logger.info("  R4: Attempting PVWatts V8 API (fallback)...")
         p50_yield_mwh = _run_pvwatts(lat, lon, dc_capacity_mw, config)
         if p50_yield_mwh is not None:
-            used_api = True
+            engine_used = "pvwatts"
 
     # ── Path C: Latitude proxy fallback ────────────────────────────────────
     if p50_yield_mwh is None:
         logger.info("  R4: Falling back to latitude-based yield proxy.")
         proxy_hours = 1800 if abs(lat) < 30 else 1200
         p50_yield_mwh = dc_capacity_mw * proxy_hours
-        used_api = False
+        engine_used = "proxy"
 
     specific_yield = (p50_yield_mwh * 1000.0) / dc_capacity_kw if dc_capacity_kw > 0 else 0.0
     p90_yield_mwh = p50_yield_mwh * 0.92   # standard ±8% interannual variability
 
-    return p50_yield_mwh, p90_yield_mwh, specific_yield, used_api
+    return p50_yield_mwh, p90_yield_mwh, specific_yield, engine_used

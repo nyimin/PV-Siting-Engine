@@ -3,7 +3,7 @@ import math
 import geopandas as gpd
 import pandas as pd
 import numpy as np
-from shapely.geometry import Polygon, MultiPolygon, LineString, box, mapping, Point
+from shapely.geometry import Polygon, MultiPolygon, LineString, box, mapping, Point, GeometryCollection
 from shapely.affinity import rotate, translate
 from shapely.ops import unary_union
 
@@ -316,29 +316,31 @@ def generate_solar_blocks(buildable_area_gdf, config, terrain_paths=None):
                                 (row_center_x - half_len, y + half_h),
                             ])
     
-                            if poly.contains(row_rect.centroid):
-                                overlap = poly.intersection(row_rect)
-                                if overlap.area / row_rect.area >= 0.50:
-                                    terrain_ok, slope_val = _check_row_terrain(row_rect, terrain_srcs, config)
-                                    if terrain_ok:
-                                        all_candidate_rows.append({
-                                            "geometry": row_rect,
-                                            "slope_deg": round(slope_val, 2),
-                                            "strings": strings_per_row,
-                                            "paddock_id": cand.get("paddock_id", "P000")
-                                        })
-                                    else:
-                                        dropped_terrain += 1
+                            overlap = poly.intersection(row_rect)
+                            if not overlap.is_empty and overlap.area / row_rect.area >= 0.25:
+                                terrain_ok, slope_val = _check_row_terrain(overlap, terrain_srcs, config)
+                                if terrain_ok:
+                                    # Strictly clip the row to the buildable area to prevent overlaps
+                                    # Calculate strings based on the clipped EW width
+                                    clipped_width = overlap.bounds[2] - overlap.bounds[0]
+                                    actual_strings = max(1, int(round(clipped_width / string_ew_width)))
+                                    
+                                    all_candidate_rows.append({
+                                        "geometry": overlap,
+                                        "slope_deg": round(slope_val, 2),
+                                        "strings": actual_strings,
+                                        "paddock_id": cand.get("paddock_id", "P000")
+                                    })
                                 else:
-                                    dropped_overlap += 1
+                                    dropped_terrain += 1
                             else:
-                                dropped_centroid += 1
+                                dropped_overlap += 1
                             y += row_pitch
             
             # Advance X for the next column 
             x += table_ew_width + inter_table_gap_m
     
-    logger.info(f"  Row gen stats: {dropped_centroid} dropped (centroid out), {dropped_overlap} dropped (overlap < 50%), {dropped_terrain} dropped (terrain constraints)")
+    logger.info(f"  Row gen stats: {dropped_overlap} dropped (overlap < 25%), {dropped_terrain} dropped (terrain constraints)")
 
     total_generated_strings = sum(r["strings"] for r in all_candidate_rows)
     logger.info(f"  Generated {len(all_candidate_rows)} total rows ({total_generated_strings} strings).")
@@ -376,19 +378,18 @@ def generate_solar_blocks(buildable_area_gdf, config, terrain_paths=None):
         
         # Clip the convex hull strictly to the overall buildable area boundary
         raw_hull = raw_hull.intersection(union_geom)
+        if raw_hull.is_empty or raw_hull.area < 10.0:
+            return None
         
-        # Find the center of this block to carve an internal maintenance access road
-        cx = raw_hull.centroid.x
+        block_geom = raw_hull
         
-        # Carve a 6m wide internal access road canyon down the middle
-        miny_hull, maxy_hull = raw_hull.bounds[1], raw_hull.bounds[3]
-        canyon_poly = Polygon([
-            (cx - 3.0, miny_hull - 10),
-            (cx + 3.0, miny_hull - 10),
-            (cx + 3.0, maxy_hull + 10),
-            (cx - 3.0, maxy_hull + 10)
-        ])
-        block_geom = raw_hull.difference(canyon_poly)
+        # Ensure block_geom is only Polygon or MultiPolygon to prevent Folium GeometryCollection crashes
+        if isinstance(block_geom, GeometryCollection):
+            polys = [g for g in block_geom.geoms if isinstance(g, (Polygon, MultiPolygon))]
+            if polys:
+                block_geom = unary_union(polys)
+            else:
+                block_geom = Polygon()
         
         block_name = f"B{b_counter:03d}"
         block_dc = round(c_strings * mods_per_string * mod_power_w / 1e6, 3)
@@ -547,13 +548,7 @@ def generate_solar_blocks(buildable_area_gdf, config, terrain_paths=None):
                                 r_geoms = kept_b_rows.geometry.tolist()
                                 raw_hull = unary_union(r_geoms).convex_hull
                                 raw_hull = raw_hull.intersection(union_geom)
-                                cx = raw_hull.centroid.x
-                                miny_hull, maxy_hull = raw_hull.bounds[1], raw_hull.bounds[3]
-                                canyon_poly = Polygon([
-                                    (cx - 3.0, miny_hull - 10), (cx + 3.0, miny_hull - 10),
-                                    (cx + 3.0, maxy_hull + 10), (cx - 3.0, maxy_hull + 10)
-                                ])
-                                target_blocks_gdf.at[threshold_idx, "geometry"] = raw_hull.difference(canyon_poly)
+                                target_blocks_gdf.at[threshold_idx, "geometry"] = raw_hull
                                 target_blocks_gdf.at[threshold_idx, "area_ha"] = round(target_blocks_gdf.at[threshold_idx, "geometry"].area / 10000, 3)
                                 target_blocks_gdf.at[threshold_idx, "strings"] = actual_strings
                                 target_blocks_gdf.at[threshold_idx, "capacity_ac_mw"] = round((actual_strings / target_strings_per_block) * ac_per_block, 3)

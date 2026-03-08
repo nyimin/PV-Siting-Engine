@@ -63,7 +63,8 @@ def save_gis_layers(output_dir, **gdfs):
 
 def create_layout_map(site_gdf, buildable_gdf, blocks_gdf, rows_gdf,
                       inverters_gdf, transformers_gdf, substation_gdf, bess_gdf,
-                      roads_gdf, mv_cables_gdf, lv_cables_gdf, output_dir):
+                      roads_gdf, mv_cables_gdf, lv_cables_gdf, output_dir,
+                      transmission_gdf=None):
     """Creates a static overview map of the generated conceptual layout."""
     logger.info("Generating layout map...")
 
@@ -80,13 +81,23 @@ def create_layout_map(site_gdf, buildable_gdf, blocks_gdf, rows_gdf,
     if rows_gdf is not None and not rows_gdf.empty:
         rows_gdf.plot(ax=ax, facecolor="#1565c0", alpha=0.7, edgecolor="none", zorder=4)
     if roads_gdf is not None and not roads_gdf.empty:
-        # Main spine road — thick amber, drawn above MV cables for visibility
-        spine_roads = roads_gdf[roads_gdf.get("road_type", "").eq("main_collector")] if "road_type" in roads_gdf.columns else gpd.GeoDataFrame()
-        branch_roads = roads_gdf[roads_gdf.get("road_type", "").eq("branch_road")] if "road_type" in roads_gdf.columns else roads_gdf
-        if not spine_roads.empty:
-            spine_roads.plot(ax=ax, color="#e65100", linewidth=3.5, linestyle="-", zorder=10, alpha=0.9)
-        if not branch_roads.empty:
-            branch_roads.plot(ax=ax, color="#bf8040", linewidth=1.8, linestyle="-", zorder=9, alpha=0.85)
+        if "road_type" in roads_gdf.columns:
+            spine_roads = roads_gdf[roads_gdf["road_type"] == "main_collector"]
+            sec_roads = roads_gdf[roads_gdf["road_type"] == "secondary_collector"]
+            tert_roads = roads_gdf[roads_gdf["road_type"] == "tertiary_aisle"]
+            branch_roads = roads_gdf[roads_gdf["road_type"] == "branch_road"]
+            
+            # Draw from lowest hierarchy to highest so spine is on top
+            if not tert_roads.empty:
+                tert_roads.plot(ax=ax, color="#8d6e63", linewidth=0.8, linestyle="-", zorder=7, alpha=0.6)
+            if not branch_roads.empty:
+                branch_roads.plot(ax=ax, color="#a1887f", linewidth=1.2, linestyle="-", zorder=8, alpha=0.8)
+            if not sec_roads.empty:
+                sec_roads.plot(ax=ax, color="#bf8040", linewidth=1.8, linestyle="-", zorder=9, alpha=0.85)
+            if not spine_roads.empty:
+                spine_roads.plot(ax=ax, color="#e65100", linewidth=3.5, linestyle="-", zorder=10, alpha=0.9)
+        else:
+            roads_gdf.plot(ax=ax, color="#bf8040", linewidth=1.8, linestyle="-", zorder=9, alpha=0.85)
     if lv_cables_gdf is not None and not lv_cables_gdf.empty:
         lv_cables_gdf.plot(ax=ax, color="#ffb74d", linewidth=0.8, linestyle=":", zorder=6)
     if mv_cables_gdf is not None and not mv_cables_gdf.empty:
@@ -99,6 +110,8 @@ def create_layout_map(site_gdf, buildable_gdf, blocks_gdf, rows_gdf,
         substation_gdf.plot(ax=ax, color="#d32f2f", marker="*", markersize=200, zorder=9)
     if bess_gdf is not None and not bess_gdf.empty:
         bess_gdf.plot(ax=ax, facecolor="#fbc02d", edgecolor="#f57f17", linewidth=1.5, zorder=10)
+    if transmission_gdf is not None and not transmission_gdf.empty:
+        transmission_gdf.plot(ax=ax, color="#4a148c", linewidth=2.5, linestyle="-", zorder=11)
 
     try:
         import contextily as cx
@@ -119,6 +132,7 @@ def create_layout_map(site_gdf, buildable_gdf, blocks_gdf, rows_gdf,
         plt.Line2D([0], [0], marker="^", color="w", markerfacecolor="#7b1fa2",  markersize=10, label="Block Transformers"),
         plt.Line2D([0], [0], marker="*", color="w", markerfacecolor="#d32f2f",  markersize=14, label="Substation"),
         mpatches.Patch(facecolor="#fbc02d", edgecolor="#f57f17", label="BESS"),
+        plt.Line2D([0], [0], color="#4a148c", linewidth=2.5, label="HV Transmission to POI"),
     ]
     ax.legend(handles=legend_items, loc='upper left', bbox_to_anchor=(1, 1), fontsize=9)
 
@@ -143,7 +157,7 @@ def create_layout_map(site_gdf, buildable_gdf, blocks_gdf, rows_gdf,
 def create_interactive_map(site_gdf, buildable_gdf, blocks_gdf, rows_gdf,
                            inverters_gdf, transformers_gdf, substation_gdf, bess_gdf,
                            roads_gdf, mv_cables_gdf, lv_cables_gdf, output_dir,
-                           om_gdf=None, guard_gdf=None):
+                           om_gdf=None, guard_gdf=None, transmission_gdf=None):
     """Creates an interactive Folium map of the generated conceptual layout."""
     logger.info("Generating interactive Folium layout map...")
 
@@ -217,6 +231,7 @@ def create_interactive_map(site_gdf, buildable_gdf, blocks_gdf, rows_gdf,
     add_gdf(bess_gdf,       "BESS Compound",        {'color':'#f57f17','weight':2,'fillColor':'#fbc02d','fillOpacity':0.8},   tooltip=bess_tt)
     add_gdf(om_gdf,         "O&M Facility",          {'color':'#1b5e20','weight':2,'fillColor':'#a5d6a7','fillOpacity':0.8},   tooltip=om_tt)
     add_gdf(guard_gdf,      "Guard House",           {'color':'#37474f','weight':1.5,'fillColor':'#78909c','fillOpacity':0.9}, tooltip=guard_tt)
+    add_gdf(transmission_gdf, "HV Transmission Line", {'color':'#4a148c','weight':4,'dashArray':'10, 5'})
 
     folium.LayerControl().add_to(m)
     map_path = os.path.join(output_dir, "layout_map.html")
