@@ -46,7 +46,11 @@ def compile_metrics(site_gdf, buildable_gdf, exclusions_gdf, blocks_gdf, rows_gd
     centroid = site_wgs84.geometry.union_all().centroid
     lat, lon = centroid.y, centroid.x
 
-    annual_p50_mwh, annual_p90_mwh, spec_yield, pvwatts_used = calculate_yield(lat, lon, installed_dc_mw, config)
+    annual_p50_mwh, annual_p90_mwh, spec_yield, pvwatts_used = calculate_yield(
+        lat, lon, installed_dc_mw, config,
+        rows_gdf=rows_gdf,
+        slope_raster_path=terrain_paths.get("slope") if terrain_paths else None,
+    )
     cut_m3, fill_m3, ew_capex, ew_rejected_ha = calculate_earthworks(blocks_gdf, terrain_paths, config)
 
     # Component counts
@@ -246,11 +250,20 @@ def generate_report(metrics, output_dir):
                 label = ctype.replace("osm_", "OSM: ").replace("terrain_", "Terrain: ").replace("lulc_", "LULC: ")
                 exclusion_section += f"| {label} | {area} |\n"
 
-        pvwatts_note = ("" if metrics.get("pvwatts_used_api")
-                    else "\n> ⚠️ **Yield estimate uses default 1 600 kWh/kWp (no PVWatts API key). "
-                         "Results may be ±30% from actual. Set PVWATTS_API_KEY in .env.**\n")
+        pvwatts_note = (
+            "" if metrics.get("pvwatts_used_api")
+            else "\n> ⚠️ **Yield estimate uses latitude proxy — no API or PySAM available. "
+                 "Set `yield.engine: pysam` and install `nrel-pysam`.**\n"
+        )
     else:
         pvwatts_note = ""
+
+    # Yield engine label for report header
+    yield_engine_label = (
+        "PySAM Pvsamv1 (3D shading)" if metrics.get("pvwatts_used_api") and metrics.get("annual_p50_yield_mwh", 0) > 0
+        else "PVWatts V8 API (lumped)" if metrics.get("pvwatts_used_api")
+        else "Latitude Proxy (offline fallback)"
+    )
 
     content = f"""# Solar PV Conceptual Layout — Engineering Report
 
@@ -292,6 +305,7 @@ def generate_report(metrics, output_dir):
 | **Annual Energy (P50)** | **{metrics['annual_p50_yield_mwh']:,.0f} MWh/year** |
 | Estimated P90 Energy | {metrics['annual_p90_yield_mwh']:,.0f} MWh/year |
 | Specific Yield | {metrics['specific_yield_kwh_kwp']:,.0f} kWh/kWp/year |
+| Yield Engine | {yield_engine_label} |
 {pvwatts_note}
 
 ## O&M Facility

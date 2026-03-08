@@ -29,7 +29,7 @@ corridor_info      : dict          — metadata for downstream routing
 import logging
 import numpy as np
 import geopandas as gpd
-from shapely.geometry import LineString, Point, Polygon, MultiPolygon, MultiLineString
+from shapely.geometry import LineString, Point, Polygon, MultiPolygon, MultiLineString, box
 from shapely.ops import unary_union, nearest_points, split
 from shapely.affinity import rotate
 
@@ -189,11 +189,132 @@ def _extend_line_to_boundary(start_pt, direction, buildable_geom, max_extend=500
     return _get_connected_segment(clipped, start_pt)
 
 
+def _generate_tertiary_aisles(buildable_geom, terrain_paths, config):
+    """Generate terrain-guided tertiary aisle polygons (6 m wide) inside candidate
+    block cells, placing each aisle along the lowest-slope N-S axis rather than
+    the geometric centroid.
+
+    The function tiles the buildable area with a coarse cell grid matching the
+    approximate block footprint, then for each cell samples the slope raster at
+    a set of candidate E-W positions and picks the axis with the lowest mean slope.
+
+    Parameters
+    ----------
+    buildable_geom : shapely geometry
+        Union of the reduced buildable area (after BOP + main/branch corridors subtracted).
+    terrain_paths : dict
+        Must contain ``'slope'`` key pointing to a slope raster (values in DEGREES).
+    config : dict
+        Full pipeline config.  Reads ``roads.tertiary_aisle_width_m``,
+        ``roads.tertiary_aisle_slope_search_step_m``, ``block.strings_per_table``,
+        ``solar.*``.
+
+    Returns
+    -------
+    list of shapely.Polygon
+        Aisle exclusion polygons ready to union into the corridor set.
+    list of shapely.LineString
+        Corresponding aisle centrelines (stored in corridor_info).
+    """
+    from utils.raster_helpers import sample_raster_mean as _srm
+
+    roads_cfg = config.get("roads", {})
+    aisle_width = roads_cfg.get("tertiary_aisle_width_m", 6)
+    search_step = roads_cfg.get("tertiary_aisle_slope_search_step_m", 10)
+
+    solar_cfg = config.get("solar", {})
+    block_cfg = config.get("block", {})
+    mod_w = solar_cfg.get("module_width_m", 1.303)
+    mod_l = solar_cfg.get("module_length_m", 2.384)
+    mods_per_string = solar_cfg.get("modules_per_string", 28)
+    strings_per_table = block_cfg.get("strings_per_table", 2)
+    gcr = solar_cfg.get("gcr", 0.38)
+
+    # Table geometry (2P portrait)
+    n_high = 2
+    mods_ew = mods_per_string // n_high
+    table_ew_width = mods_ew * mod_w * strings_per_table  # E-W width of one row
+    table_hgt = n_high * mod_l                            # tilted table depth
+    flat_pitch = table_hgt / gcr                          # N-S row pitch
+
+    # Approximate block cell size: use row E-W width × estimated N-S depth of one block
+    # (target_strings_per_block / strings_per_table) rows × flat_pitch
+    strings_per_inv = solar_cfg.get("strings_per_inverter", 22)
+    invs_per_block = block_cfg.get("inverters_per_block", 10)
+    target_strings = strings_per_inv * invs_per_block
+    rows_per_block = max(1, target_strings // strings_per_table)
+    cell_ns_depth = rows_per_block * flat_pitch          # approx N-S extent of one block
+
+    minx, miny, maxx, maxy = buildable_geom.bounds
+    slope_path = terrain_paths.get("slope") if terrain_paths else None
+
+    aisle_polys = []
+    aisle_lines = []
+
+    x = minx
+    while x < maxx:
+        y = miny
+        while y < maxy:
+            # Candidate block cell bounding box
+            cell = box(x, y, x + table_ew_width, y + cell_ns_depth)
+            cell_clipped = cell.intersection(buildable_geom)
+            if cell_clipped.is_empty or cell_clipped.area < (table_ew_width * cell_ns_depth * 0.2):
+                y += cell_ns_depth
+                continue
+
+            cx_min, cy_min, cx_max, cy_max = cell_clipped.bounds
+            cell_width = cx_max - cx_min
+
+            # Sample slope raster at candidate N-S axes within this cell
+            best_slope = float("inf")
+            best_cx = cx_min + cell_width / 2  # centroid fallback
+
+            if slope_path:
+                n_candidates = max(1, int(cell_width / search_step))
+                for k in range(n_candidates):
+                    cand_x = cx_min + (k + 0.5) * (cell_width / n_candidates)
+                    # Sample a thin N-S strip at this x position
+                    strip = box(
+                        cand_x - aisle_width / 2, cy_min,
+                        cand_x + aisle_width / 2, cy_max
+                    ).intersection(buildable_geom)
+                    if strip.is_empty:
+                        continue
+                    slope_val = _srm(strip, slope_path)
+                    if slope_val is not None and slope_val < best_slope:
+                        best_slope = slope_val
+                        best_cx = cand_x
+
+            # Create aisle polygon and centreline at best_cx
+            aisle_line = LineString(
+                [(best_cx, cy_min - 5), (best_cx, cy_max + 5)]
+            ).intersection(buildable_geom)
+            if aisle_line.is_empty or aisle_line.length < 20:
+                y += cell_ns_depth
+                continue
+
+            aisle_poly = aisle_line.buffer(aisle_width / 2, cap_style="flat")
+            aisle_poly = aisle_poly.intersection(buildable_geom)
+            if not aisle_poly.is_empty:
+                aisle_polys.append(aisle_poly)
+                if aisle_line.geom_type == "LineString":
+                    aisle_lines.append(aisle_line)
+
+            y += cell_ns_depth
+        x += table_ew_width
+
+    logger.info(
+        f"  Tertiary aisles: {len(aisle_polys)} terrain-guided aisles generated "
+        f"(width {aisle_width}m, slope-search step {search_step}m)"
+    )
+    return aisle_polys, aisle_lines
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Public API
 # ─────────────────────────────────────────────────────────────────────────────
 
-def plan_corridors(buildable_area_gdf, substation_point, config):
+def plan_corridors(buildable_area_gdf, substation_point, config, terrain_paths=None):
     """Generate infrastructure corridors before block layout.
 
     Parameters
@@ -204,6 +325,11 @@ def plan_corridors(buildable_area_gdf, substation_point, config):
         Substation location (origin of main collector road).
     config : dict
         Full pipeline config including ``roads`` and ``mv_cables`` sections.
+    terrain_paths : dict, optional
+        Terrain raster paths.  When provided and
+        ``roads.tertiary_aisles_enabled: true`` in config, terrain-guided
+        tertiary aisles are generated as pre-layout exclusions inside block
+        cells (R2 — Road-First Tessellation).
 
     Returns
     -------
@@ -214,7 +340,8 @@ def plan_corridors(buildable_area_gdf, substation_point, config):
     corridor_info : dict
         Metadata for downstream routing:
         ``spine_line``, ``branch_lines``, ``branch_spacing_m``,
-        ``spine_direction``, ``main_collector_width_m``.
+        ``spine_direction``, ``main_collector_width_m``,
+        ``tertiary_aisle_lines``.
     """
     logger.info("=== Infrastructure Corridor Planning ===")
 
@@ -336,8 +463,30 @@ def plan_corridors(buildable_area_gdf, substation_point, config):
     logger.info(f"  Secondary branches: {len(branch_lines)} corridors, "
                 f"spacing: {branch_spacing:.0f}m, width: {branch_corridor_width}m")
 
+    # ── Task 3.2b: Tertiary aisles (R2 — Road-First Tessellation) ──
+    # Generate terrain-guided intra-block access aisles using the slope raster.
+    # These replace the post-generation centroid canyon previously carved in _finalize_block.
+    roads_cfg = config.get("roads", {})
+    tertiary_enabled = roads_cfg.get("tertiary_aisles_enabled", False)
+    tertiary_aisle_polys = []
+    tertiary_aisle_lines = []
+
+    # We sample aisles against the buildable area post main/branch corridor subtraction.
+    # Use a provisional difference to get a realistic cell extent.
+    provisional_reduced = buildable_geom.difference(
+        unary_union([spine_corridor] + branch_corridors)
+    ).buffer(0)
+
+    if tertiary_enabled and not provisional_reduced.is_empty:
+        tertiary_aisle_polys, tertiary_aisle_lines = _generate_tertiary_aisles(
+            provisional_reduced, terrain_paths, config
+        )
+    elif not tertiary_enabled:
+        logger.info("  Tertiary aisles disabled (roads.tertiary_aisles_enabled: false). "
+                    "Intra-block roads will be carved geometrically post-layout.")
+
     # ── Merge all corridors ──
-    all_corridor_geoms = [spine_corridor] + branch_corridors
+    all_corridor_geoms = [spine_corridor] + branch_corridors + tertiary_aisle_polys
     corridor_union = unary_union(all_corridor_geoms)
 
     # Clip to buildable area
@@ -357,6 +506,17 @@ def plan_corridors(buildable_area_gdf, substation_point, config):
                 "width_m": branch_corridor_width,
                 "length_m": round(branch_lines[j].length, 1) if j < len(branch_lines) else 0,
                 "geometry": clipped,
+            })
+    # Record tertiary aisles in corridor GDF for GIS export / map display
+    aisle_width_cfg = roads_cfg.get("tertiary_aisle_width_m", 6)
+    for ap in tertiary_aisle_polys:
+        clipped_a = ap.intersection(buildable_geom)
+        if not clipped_a.is_empty:
+            corridor_records.append({
+                "corridor_type": "tertiary_aisle",
+                "width_m": aisle_width_cfg,
+                "length_m": round(clipped_a.length, 1),
+                "geometry": clipped_a,
             })
 
     corridor_gdf = gpd.GeoDataFrame(corridor_records, crs=crs)
@@ -404,6 +564,8 @@ def plan_corridors(buildable_area_gdf, substation_point, config):
         "branch_spacing_m": branch_spacing,
         "main_collector_width_m": main_corridor_width,
         "branch_corridor_width_m": branch_corridor_width,
+        # R2: terrain-guided tertiary aisle centrelines for downstream road snapping
+        "tertiary_aisle_lines": tertiary_aisle_lines,
     }
 
     return corridor_gdf, reduced_buildable, corridor_info

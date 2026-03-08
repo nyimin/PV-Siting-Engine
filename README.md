@@ -27,25 +27,23 @@ This engine transforms unrefined site boundaries into full conceptual engineerin
 ### 🏗️ Solar Layout & BOP Siting
 
 - **Multi-Criteria Substation Placement:** Siting logic evaluates 5 criteria (20% weight each): flat terrain, centroid proximity, road access, flood risk avoidance, and buildability.
-- **BOP Zone Reservation:** Automatically reserves and carves out space for Substation, BESS (Battery Energy Storage System), and O&M compounds _before_ panel placement, mirroring industry-standard tools like PVcase.
-- **Strip-Based Block Generation:** Dynamically chunks PV rows across N-S columns to maximize variable boundary space, recovering otherwise discarded blocks to increase total installed capacity. Maintains strict True South (E-W) alignment for fixed-tilt systems.
-- **Geometric Block Generation:** Clusters and generates PV blocks (e.g., 3.2 MWac) with true module-level geometry, strings, and inverters.
-- **Central Skids & Internal Access Roads:** Automatically carves internal access roads (e.g. 6m gaps) through the heart of utility blocks, centering the Virtual Central Skids (Block Transformers & tightly clustered String Inverters).
+- **Substation & BOP Siting:** Multi-criteria siting evaluates terrain, proximity, and access. Automatically reserves space for Substation, BESS, and O&M compounds _before_ panel placement.
+- **2D Spatial Clustering:** Generates PV blocks (e.g., 3.2 MWac) using global region-growing adjacency to maximize contiguous buildable area across road boundaries.
+- **Intra-Block Access Canyons:** Automatically carves 6m-wide internal access roads through the heart of utility blocks, centering the Virtual Central Skids for commercial-grade O&M access.
+- **Exact Target Capacity Enforcement:** Intelligent block selection prioritizes the flattest terrain and best proximity to the POI, dynamically truncating the final block at the sub-string level to precisely meet the requested MW capacity without stranding valid land.
 
 ### ⚡ Infrastructure Routing
 
-- **Terrain-Aware A\* Spine Road:** Generates a dominant "main collector" spine road from the substation using a 10m-resolution A\* pathfinder restricted entirely within the true buildable area, guaranteeing it never crosses exclusion zones.
-- **Herringbone Comb Branches:** Branch roads are generated perpendicular to the local tangent of the curving spine road, creating a natural comb network that flows with the terrain geometry.
-- **Strict Paddock Geometric Containment:** PV Blocks are explicitly clipped to the precise boundaries of "PV Paddocks" (the buildable area minus road corridors), mathematically guaranteeing no overlaps between panels and roads/cable corridors.
-- **Daisy-Chain MV Cables:** 33 kV medium-voltage cables string block transformers together in a daisy-chain along the physical road graph, eliminating cross-country routing and accurately representing real-world commercial topology.
-- **Separated Networks:** Maintains distinct GIS layers for internal access roads, MV electrical cables, and LV DC/AC cabling.
+- **Terrain-Aware A\* Spine Road:** Generates the primary "main collector" using a 10m-resolution A\* pathfinder that respects terrain gradients and exclusion boundaries.
+- **Herringbone Comb Branches:** Secondary corridors branch perpendicularly from the spine, creating a high-fidelity road network.
+- **Daisy-Chain MV Cables:** 33 kV medium-voltage cables string block transformers together in a daisy-chain topology along the physical road graph, accurately representing real-world commercial collection systems.
 
-### 📊 Reporting & Outputs
+### 📊 Reporting & Economics
 
-- **Engineering Report:** Generates a comprehensive Markdown report including DC/AC ratio, GCR, component counts, infrastructure lengths, and a detailed constraints breakdown.
-- **CAPEX Economic Scoring:** Fully calculates Blended CAPEX and Specific CAPEX ($/Wdc) leveraging configurable unit costs for Modules, Inverters, Roads, MV Cables, and Earthworks.
+- **Engineering Report:** Generates a comprehensive Markdown report including DC/AC ratio, GCR, component counts, and a detailed constraints breakdown.
+- **CAPEX Economic Scoring:** Calculates Blended CAPEX and Specific CAPEX ($/Wdc) using configurable unit costs for Modules, Inverters, Roads, MV Cables, and Earthworks.
 - **Civil Earthworks Estimation:** Rough Cut/Fill volume (m³) calculation using planar fit analysis over block areas.
-- **Yield Integration:** Estimated annual energy yield integration via NREL PVWatts API.
+- **Yield Integration:** Estimated annual energy yield (P50/P90) via NREL PVWatts API.
 - **Visual Assets:** Exports 10+ GIS layers (GeoJSON, GPKG), high-resolution static maps, and interactive HTML dashboards.
 
 ---

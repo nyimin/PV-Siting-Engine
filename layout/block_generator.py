@@ -199,7 +199,7 @@ def generate_solar_blocks(buildable_area_gdf, config, terrain_paths=None):
     logger.info(f"  Target Power Block: {dc_per_block:.3f} MWdc / {ac_per_block:.3f} MWac "
                 f"({target_strings_per_block} strings)")
 
-    min_fill = block_cfg.get("min_fill_fraction", 0.99)
+    min_fill = block_cfg.get("min_fill_fraction", 0.60)
     
     # FOR FIXED TILT, ROWS MUST FACE SOUTH. OBLIQUE TESSELLATION IS INVALID.
     oblique = False
@@ -270,7 +270,7 @@ def generate_solar_blocks(buildable_area_gdf, config, terrain_paths=None):
 
                         if poly.contains(row_rect.centroid):
                             overlap = poly.intersection(row_rect)
-                            if overlap.area / row_rect.area >= 0.99:
+                            if overlap.area / row_rect.area >= 0.50:
                                 terrain_ok, slope_val = _check_row_terrain(row_rect, terrain_paths, config)
                                 if terrain_ok:
                                     all_candidate_rows.append({
@@ -326,10 +326,8 @@ def generate_solar_blocks(buildable_area_gdf, config, terrain_paths=None):
         r_geoms = [b[0]["geometry"] for b in c_rows]
         raw_hull = unary_union(r_geoms).convex_hull
         
-        # Clip the convex hull strictly to the paddock boundary
-        pid = c_rows[0][0]["paddock_id"]
-        paddock_geom = working_area[working_area["paddock_id"] == pid].geometry.iloc[0]
-        raw_hull = raw_hull.intersection(paddock_geom)
+        # Clip the convex hull strictly to the overall buildable area boundary
+        raw_hull = raw_hull.intersection(union_geom)
         
         # Find the center of this block to carve an internal maintenance access road
         cx = raw_hull.centroid.x
@@ -371,106 +369,163 @@ def generate_solar_blocks(buildable_area_gdf, config, terrain_paths=None):
             
         return b_dict, r_list
 
-    # ── Phase 3: Paddock-Constrained Clustering ──
-    # Process each paddock independently. Rows are only clustered with other rows
-    # in the VERY SAME paddock.
-    unassigned_by_paddock = {}
-    for i, r in enumerate(all_candidate_rows):
-        pid = r["paddock_id"]
-        if pid not in unassigned_by_paddock:
-            unassigned_by_paddock[pid] = set()
-        unassigned_by_paddock[pid].add(i)
+    # ── Phase 3: Global Clustering ──
+    # Rows are clustered across paddock boundaries to form full blocks
+    unassigned_indices = set(range(len(all_candidate_rows)))
+    ordered_indices = sorted(list(unassigned_indices), 
+                           key=lambda i: (all_candidate_rows[i]["geometry"].centroid.y, 
+                                          all_candidate_rows[i]["geometry"].centroid.x))
 
-    for pid, p_indices in unassigned_by_paddock.items():
-        # Sort indices by Y, then X to pick good seed points (e.g., South-West corner)
-        ordered_indices = sorted(list(p_indices), 
-                               key=lambda i: (all_candidate_rows[i]["geometry"].centroid.y, 
-                                              all_candidate_rows[i]["geometry"].centroid.x))
-
-        while p_indices:
-            # 1. Pick a seed
-            seed_idx = next(i for i in ordered_indices if i in p_indices)
+    while unassigned_indices:
+        # 1. Pick a seed
+        seed_idx = next((i for i in ordered_indices if i in unassigned_indices), None)
+        if seed_idx is None:
+            break
             
-            # 2. Start a BFS region-growing queue
-            queue = [seed_idx]
-            current_block_rows = []
-            current_strings = 0
+        # 2. Start a BFS region-growing queue
+        queue = [seed_idx]
+        current_block_rows = []
+        current_strings = 0
+        
+        while queue and current_strings < target_strings_per_block:
+            curr_idx = queue.pop(0)
+            if curr_idx not in unassigned_indices:
+                continue
+                
+            r = all_candidate_rows[curr_idx]
+            strings_to_add = min(r["strings"], target_strings_per_block - current_strings)
             
-            while queue and current_strings < target_strings_per_block:
-                curr_idx = queue.pop(0)
-                if curr_idx not in p_indices:
-                    continue
-                    
-                r = all_candidate_rows[curr_idx]
-                strings_to_add = min(r["strings"], target_strings_per_block - current_strings)
+            current_block_rows.append((r, strings_to_add))
+            current_strings += strings_to_add
+            unassigned_indices.remove(curr_idx)
+            
+            # If we need more capacity, find neighbors of this row
+            if current_strings < target_strings_per_block:
+                search_area = r["geometry"].centroid.buffer(adjacency_radius)
+                neighbor_indices = tree.query(search_area)
                 
-                current_block_rows.append((r, strings_to_add))
-                current_strings += strings_to_add
-                p_indices.remove(curr_idx)
+                curr_pt = r["geometry"].centroid
                 
-                # If we need more capacity, find neighbors of this row
-                if current_strings < target_strings_per_block:
-                    search_area = r["geometry"].centroid.buffer(adjacency_radius)
-                    neighbor_indices = tree.query(search_area)
-                    
-                    # Sort neighbors by distance to keep the block compact
-                    curr_pt = r["geometry"].centroid
-                    
-                    valid_neighbors = []
-                    for n_idx in neighbor_indices:
-                        # MUST be in the same paddock (already true if it's in p_indices)
-                        if n_idx in p_indices and n_idx not in queue:
-                            n_pt = all_candidate_rows[n_idx]["geometry"].centroid
-                            dist = curr_pt.distance(n_pt)
-                            valid_neighbors.append((dist, n_idx))
-                            
-                    valid_neighbors.sort(key=lambda x: x[0])
-                    for _, n_idx in valid_neighbors:
-                        if n_idx not in queue:
-                            queue.append(n_idx)
+                valid_neighbors = []
+                for n_idx in neighbor_indices:
+                    # Allow cross paddock mapping
+                    if n_idx in unassigned_indices and n_idx not in queue:
+                        n_pt = all_candidate_rows[n_idx]["geometry"].centroid
+                        dist = curr_pt.distance(n_pt)
+                        valid_neighbors.append((dist, n_idx))
+                        
+                valid_neighbors.sort(key=lambda x: x[0])
+                for _, n_idx in valid_neighbors:
+                    if n_idx not in queue:
+                        queue.append(n_idx)
 
-            # 3. Finalize the gathered block
-            if current_strings >= target_strings_per_block * min_fill:
-                res = _finalize_block(current_block_rows, current_strings, block_id_counter)
-                if res:
-                    blocks.append(res[0])
-                    final_rows.extend(res[1])
-                    block_id_counter += 1
-            else:
-                # If the block couldn't hit min_fill (e.g. stranded fragment), we just drop those rows
-                pass
+        # 3. Finalize the gathered block
+        if current_strings >= target_strings_per_block * min_fill:
+            res = _finalize_block(current_block_rows, current_strings, block_id_counter)
+            if res:
+                blocks.append(res[0])
+                final_rows.extend(res[1])
+                block_id_counter += 1
+        else:
+            # Drop stranded fragment
+            pass
 
-    blocks_gdf = gpd.GeoDataFrame(blocks, crs=buildable_area_gdf.crs)
-    rows_gdf = gpd.GeoDataFrame(final_rows, crs=buildable_area_gdf.crs)
+    blocks_df = pd.DataFrame(blocks)
+    if not blocks_df.empty:
+        blocks_gdf = gpd.GeoDataFrame(blocks_df, crs=buildable_area_gdf.crs)
+    else:
+        blocks_gdf = gpd.GeoDataFrame(columns=["block_id", "geometry", "capacity_ac_mw", "capacity_dc_mw", "strings", "fill_pct"], crs=buildable_area_gdf.crs)
+        
+    rows_df = pd.DataFrame(final_rows)
+    if not rows_df.empty:
+        rows_gdf = gpd.GeoDataFrame(rows_df, crs=buildable_area_gdf.crs)
+    else:
+        rows_gdf = gpd.GeoDataFrame(columns=["block_id", "row_id", "geometry", "strings", "slope_deg"], crs=buildable_area_gdf.crs)
 
-    # ── Target AC capacity limiting ──
+    # ── Target AC capacity limiting & Exact Truncation ──
     target_ac_mw = config.get("project", {}).get("target_ac_mw")
     if target_ac_mw and target_ac_mw > 0:
-        target_blocks = int(round(target_ac_mw / ac_per_block))
-        logger.info(f"  Target limit applied: {target_ac_mw} MWac → {target_blocks} full blocks needed.")
+        logger.info(f"  Target limit applied: {target_ac_mw:.2f} MWac.")
 
-        # Score blocks by flatness and distance to site centroid (proxy for substation/POI)
-        # Lower score is better
-        if len(blocks_gdf) > target_blocks:
+        if len(blocks_gdf) > 0 and blocks_gdf["capacity_ac_mw"].sum() > target_ac_mw:
             site_centroid = buildable_area_gdf.geometry.union_all().centroid
             
             def calculate_score(row):
                 block_geom = row.geometry
                 dist = block_geom.centroid.distance(site_centroid)
                 
-                # Approximate flat average slope from constituent rows
                 block_rows = rows_gdf[rows_gdf["block_id"] == row["block_id"]]
                 avg_slope = block_rows["slope_deg"].mean() if not block_rows.empty else 0.0
-                
-                # Penalize steep slope heavily
-                return dist + (avg_slope * 200) # 1 degree slope = 200m distance penalty
+                return dist + (avg_slope * 200)
 
             blocks_gdf["selection_score"] = blocks_gdf.apply(calculate_score, axis=1)
-            blocks_gdf = blocks_gdf.sort_values(by="selection_score", ascending=True)
+            blocks_gdf = blocks_gdf.sort_values(by="selection_score", ascending=True).reset_index(drop=True)
             
-            blocks_gdf = blocks_gdf.head(target_blocks).reset_index(drop=True)
-            blocks_gdf = blocks_gdf.drop(columns=["selection_score"])
-            logger.info(f"  → Retained top {target_blocks} blocks prioritizing flat terrain and proximity.")
+            blocks_gdf["cum_ac"] = blocks_gdf["capacity_ac_mw"].cumsum()
+            keep_mask = (blocks_gdf["cum_ac"] - blocks_gdf["capacity_ac_mw"]) < target_ac_mw
+            
+            target_blocks_gdf = blocks_gdf[keep_mask].copy().reset_index(drop=True)
+            
+            # Find the threshold block to truncate
+            threshold_idx = len(target_blocks_gdf) - 1
+            if threshold_idx >= 0:
+                t_row = target_blocks_gdf.iloc[threshold_idx]
+                ac_excess = t_row["cum_ac"] - target_ac_mw
+                
+                if ac_excess > 0.01:
+                    ac_needed_from_this_block = t_row["capacity_ac_mw"] - ac_excess
+                    strings_needed = int(round((ac_needed_from_this_block / ac_per_block) * target_strings_per_block))
+                    
+                    b_id = t_row["block_id"]
+                    if strings_needed > 0:
+                        b_rows = rows_gdf[rows_gdf["block_id"] == b_id].copy()
+                        b_rows["row_score"] = b_rows.geometry.centroid.y + b_rows.geometry.centroid.x
+                        b_rows = b_rows.sort_values("row_score", ascending=True)
+                        b_rows["cum_strings"] = b_rows["strings"].cumsum()
+                        
+                        keep_rows_mask = (b_rows["cum_strings"] - b_rows["strings"]) < strings_needed
+                        kept_b_rows = b_rows[keep_rows_mask].copy()
+                        
+                        if not kept_b_rows.empty:
+                            last_idx = kept_b_rows.index[-1]
+                            excess_strings = kept_b_rows.at[last_idx, "cum_strings"] - strings_needed
+                            if excess_strings > 0:
+                                kept_b_rows.at[last_idx, "strings"] -= excess_strings
+                                
+                            kept_b_rows = kept_b_rows.drop(columns=["row_score", "cum_strings"])
+                            
+                            actual_strings = kept_b_rows["strings"].sum()
+                            if actual_strings > 0:
+                                r_geoms = kept_b_rows.geometry.tolist()
+                                raw_hull = unary_union(r_geoms).convex_hull
+                                raw_hull = raw_hull.intersection(union_geom)
+                                cx = raw_hull.centroid.x
+                                miny_hull, maxy_hull = raw_hull.bounds[1], raw_hull.bounds[3]
+                                canyon_poly = Polygon([
+                                    (cx - 3.0, miny_hull - 10), (cx + 3.0, miny_hull - 10),
+                                    (cx + 3.0, maxy_hull + 10), (cx - 3.0, maxy_hull + 10)
+                                ])
+                                target_blocks_gdf.at[threshold_idx, "geometry"] = raw_hull.difference(canyon_poly)
+                                target_blocks_gdf.at[threshold_idx, "area_ha"] = round(target_blocks_gdf.at[threshold_idx, "geometry"].area / 10000, 3)
+                                target_blocks_gdf.at[threshold_idx, "strings"] = actual_strings
+                                target_blocks_gdf.at[threshold_idx, "capacity_ac_mw"] = round((actual_strings / target_strings_per_block) * ac_per_block, 3)
+                                target_blocks_gdf.at[threshold_idx, "capacity_dc_mw"] = round(actual_strings * mods_per_string * mod_power_w / 1e6, 3)
+                                target_blocks_gdf.at[threshold_idx, "fill_pct"] = round((actual_strings / target_strings_per_block) * 100, 1)
+                                
+                                rows_gdf = rows_gdf[rows_gdf["block_id"] != b_id]
+                                rows_gdf = pd.concat([rows_gdf, kept_b_rows], ignore_index=True)
+                            else:
+                                target_blocks_gdf = target_blocks_gdf.drop(threshold_idx)
+                                rows_gdf = rows_gdf[rows_gdf["block_id"] != b_id]
+                        else:
+                            target_blocks_gdf = target_blocks_gdf.drop(threshold_idx)
+                            rows_gdf = rows_gdf[rows_gdf["block_id"] != b_id]
+                    else:
+                        target_blocks_gdf = target_blocks_gdf.drop(threshold_idx)
+                        rows_gdf = rows_gdf[rows_gdf["block_id"] != b_id]
+            
+            blocks_gdf = target_blocks_gdf.drop(columns=["selection_score", "cum_ac"], errors='ignore')
+            logger.info(f"  → Retained top {len(blocks_gdf)} blocks prioritizing flat terrain and proximity, truncated to exact capacity.")
         
         valid_block_ids = blocks_gdf["block_id"].tolist()
         rows_gdf = rows_gdf[rows_gdf["block_id"].isin(valid_block_ids)].copy()

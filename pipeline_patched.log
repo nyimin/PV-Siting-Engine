@@ -1,0 +1,159 @@
+2026-03-07 18:36:26 - PVLayoutEngine - INFO - ============================================================
+2026-03-07 18:36:26 - PVLayoutEngine - INFO -   PV Layout Engine Pipeline ù Starting
+2026-03-07 18:36:26 - PVLayoutEngine - INFO - ============================================================
+2026-03-07 18:36:26 - PVLayoutEngine.caching - INFO -   Cache status:
+2026-03-07 18:36:26 - PVLayoutEngine.caching - INFO -     dem: 1 files, 0.08 MB
+2026-03-07 18:36:26 - PVLayoutEngine.caching - INFO -     worldcover: 2 files, 158.52 MB
+2026-03-07 18:36:26 - PVLayoutEngine.caching - INFO -     osm: 5 files, 0.0 MB
+2026-03-07 18:36:26 - PVLayoutEngine - INFO - Loading site boundary from inputs\project_boundary.gpkg
+2026-03-07 18:36:26 - PVLayoutEngine - INFO - Auto-detected UTM CRS: EPSG:32646
+2026-03-07 18:36:26 - PVLayoutEngine - INFO - Reprojecting site from EPSG:4326 to EPSG:32646
+2026-03-07 18:36:26 - PVLayoutEngine - INFO - Site area: 169.71 ha
+2026-03-07 18:36:26 - PVLayoutEngine - INFO - ==================================================
+2026-03-07 18:36:26 - PVLayoutEngine - INFO -   PHASE 1: DATA ACQUISITION
+2026-03-07 18:36:26 - PVLayoutEngine - INFO - ==================================================
+2026-03-07 18:36:26 - PVLayoutEngine.dem - INFO - Fetching DEM data (best available resolution)...
+2026-03-07 18:36:26 - PVLayoutEngine.dem - INFO - OpenTopography API key loaded from .env.
+D:\Triune\Stack Space - Documents\Code\PVLayoutEngine\terrain\dem_downloader.py:167: UserWarning: Geometry is in a geographic CRS. Results from 'buffer' are likely incorrect. Use 'GeoSeries.to_crs()' to re-project geometries to a projected CRS before this operation.
+
+  buffered_site = site_wgs84.buffer(0.01)
+2026-03-07 18:36:27 - PVLayoutEngine.dem - INFO - Loading Copernicus DEM GLO-30 (30m) from cache: data/cache\dem\dem_COP30_95.24_19.972_95.277_20.01.tif
+2026-03-07 18:36:27 - PVLayoutEngine.dem - INFO -   DEM resolution: ~30.0 m/pixel
+2026-03-07 18:36:27 - PVLayoutEngine.dem - INFO -   DEM size: 136╫137 pixels
+2026-03-07 18:36:27 - PVLayoutEngine.dem - INFO -   DEM CRS: EPSG:4326
+2026-03-07 18:36:27 - PVLayoutEngine.dem - INFO -   DEM bounds: BoundingBox(left=95.23930554444442, bottom=19.97236112222222, right=95.2770833222222, top=20.010416677777776)
+2026-03-07 18:36:27 - PVLayoutEngine.dem - WARNING -   DEM WARNING: DEM resolution (30.0m) is poor (>20m). Layout placement precision is downgraded and terrain analysis uncertainty is high.
+2026-03-07 18:36:27 - PVLayoutEngine.lulc - INFO - Fetching ESA WorldCover 2021 (10m)...
+2026-03-07 18:36:27 - PVLayoutEngine.lulc - INFO - Loading WorldCover from cache: data/cache\worldcover\worldcover_95.25_19.982_95.267_20.0.tif
+2026-03-07 18:36:27 - PVLayoutEngine.osm - INFO - Fetching OpenStreetMap constraints...
+2026-03-07 18:36:27 - PVLayoutEngine.osm - INFO -   Fetching OSM layer: buildings
+2026-03-07 18:36:27 - PVLayoutEngine.osm - WARNING -   Error fetching buildings: No matching features. Check query location, tags, and log.
+2026-03-07 18:36:27 - PVLayoutEngine.osm - INFO -   Fetching OSM layer: water
+2026-03-07 18:36:27 - PVLayoutEngine.osm - WARNING -   Error fetching water: No matching features. Check query location, tags, and log.
+2026-03-07 18:36:27 - PVLayoutEngine.osm - INFO -   Fetching OSM layer: roads
+2026-03-07 18:36:27 - PVLayoutEngine.osm - WARNING -   Error fetching roads: No matching features. Check query location, tags, and log.
+2026-03-07 18:36:27 - PVLayoutEngine.osm - INFO -   Fetching OSM layer: railways
+2026-03-07 18:36:27 - PVLayoutEngine.osm - WARNING -   Error fetching railways: No matching features. Check query location, tags, and log.
+2026-03-07 18:36:27 - PVLayoutEngine.osm - INFO -   Fetching OSM layer: power
+2026-03-07 18:36:27 - PVLayoutEngine.osm - WARNING -   Error fetching power: No matching features. Check query location, tags, and log.
+2026-03-07 18:36:27 - PVLayoutEngine.osm - INFO - Saving newly fetched geometries to cache: data/cache\osm\osm_constraints_2306ac9350fc.gpkg
+2026-03-07 18:36:27 - PVLayoutEngine.constraints - INFO - Processing OSM constraints...
+2026-03-07 18:36:27 - PVLayoutEngine - INFO - ==================================================
+2026-03-07 18:36:27 - PVLayoutEngine - INFO -   PHASE 2: TERRAIN ANALYSIS
+2026-03-07 18:36:27 - PVLayoutEngine - INFO - ==================================================
+2026-03-07 18:36:27 - PVLayoutEngine.terrain - INFO - Processing terrain analysis from data/cache\dem\dem_COP30_95.24_19.972_95.277_20.01.tif
+2026-03-07 18:36:27 - PVLayoutEngine.terrain - INFO -   Reprojecting DEM from EPSG:4326 to EPSG:32646 at 10.0m resolution (cubic resampling)
+2026-03-07 18:36:27 - PVLayoutEngine.terrain - INFO -   Reprojected DEM saved to: data\processed\terrain\dem_utm.tif
+2026-03-07 18:36:27 - PVLayoutEngine.terrain - INFO -   UTM cell size: 10.00 ╫ 10.00 m
+2026-03-07 18:36:27 - PVLayoutEngine.terrain - INFO -   Applying Gaussian smoothing (sigma=1.0) to remove high-frequency DEM noise...
+2026-03-07 18:36:27 - PVLayoutEngine.terrain - INFO -   Site latitude: 19.991░
+2026-03-07 18:36:27 - PVLayoutEngine.terrain - INFO -   Calculating Slope (degrees, Horn's method)...
+2026-03-07 18:36:27 - PVLayoutEngine.terrain - INFO -   Calculating Aspect...
+2026-03-07 18:36:27 - PVLayoutEngine.terrain - INFO -   Calculating TRI...
+2026-03-07 18:36:27 - PVLayoutEngine.terrain - INFO -   Calculating Curvature...
+2026-03-07 18:36:27 - PVLayoutEngine.terrain - INFO -   Calculating TPI (radius=15 pixels)...
+2026-03-07 18:36:27 - PVLayoutEngine.terrain - INFO -   Calculating Hillshade...
+2026-03-07 18:36:27 - PVLayoutEngine.terrain - INFO -   Calculating D8 Flow Accumulation (PySheds)...
+2026-03-07 18:36:35 - PVLayoutEngine.terrain - INFO -     Setting up PySheds grid from: data\processed\terrain\dem_utm.tif
+C:\Users\nyimi\miniconda3\Lib\site-packages\pysheds\io.py:134: UserWarning: No `nodata` value detected. Defaulting to 0.
+  warnings.warn('No `nodata` value detected. Defaulting to 0.')
+C:\Users\nyimi\miniconda3\Lib\site-packages\pysheds\io.py:134: UserWarning: No `nodata` value detected. Defaulting to 0.
+  warnings.warn('No `nodata` value detected. Defaulting to 0.')
+2026-03-07 18:36:35 - PVLayoutEngine.terrain - INFO -     Resolving depressions and flats...
+2026-03-07 18:36:36 - PVLayoutEngine.terrain - INFO -     Calculating D8 flow direction...
+2026-03-07 18:36:36 - PVLayoutEngine.terrain - INFO -     Calculating D8 flow accumulation...
+2026-03-07 18:36:36 - PVLayoutEngine.terrain - INFO -   Calculating Topographic Wetness Index (TWI)...
+2026-03-07 18:36:36 - PVLayoutEngine.terrain - INFO -   Calculating Suitability Scores (0û3 scale)...
+2026-03-07 18:36:36 - PVLayoutEngine.terrain - INFO -   --- Terrain Summary ---
+2026-03-07 18:36:36 - PVLayoutEngine.terrain - INFO -   Mean slope:      6.12░
+2026-03-07 18:36:36 - PVLayoutEngine.terrain - INFO -   Max slope:       82.02░
+2026-03-07 18:36:36 - PVLayoutEngine.terrain - INFO -   Std slope:       13.16░
+2026-03-07 18:36:36 - PVLayoutEngine.terrain - INFO -   Mean TRI:        1.47 m
+2026-03-07 18:36:36 - PVLayoutEngine.terrain - INFO -   Mean suitability index:  2.15 / 3.0
+2026-03-07 18:36:36 - PVLayoutEngine.terrain - INFO -   Buildable area (index\u22652.25): 54.1% of raster
+2026-03-07 18:36:36 - PVLayoutEngine.terrain - INFO - Terrain analysis outputs saved to data\processed\terrain
+2026-03-07 18:36:36 - PVLayoutEngine - INFO - ==================================================
+2026-03-07 18:36:36 - PVLayoutEngine - INFO -   PHASE 3: CONSTRAINTS & BUILDABLE AREA
+2026-03-07 18:36:36 - PVLayoutEngine - INFO - ==================================================
+2026-03-07 18:36:36 - PVLayoutEngine.lulc - INFO - Extracting WorldCover exclusion zones...
+2026-03-07 18:36:36 - rasterio._env - WARNING - CPLE_AppDefined in DeprecationWarning: 'Memory' driver is deprecated since GDAL 3.11. Use 'MEM' onwards. Further messages of this type will be suppressed.
+2026-03-07 18:36:36 - PVLayoutEngine.lulc - INFO -   Extracted 29 WorldCover exclusion polygons.
+2026-03-07 18:36:36 - PVLayoutEngine.constraints - INFO - Combining all constraints...
+2026-03-07 18:36:36 - PVLayoutEngine.constraints - INFO -   Converting steep_slope raster to exclusion polygons (threshold=15)...
+2026-03-07 18:36:36 - PVLayoutEngine.constraints - INFO -   steep_slope: 5.1% of raster pixels excluded
+2026-03-07 18:36:36 - PVLayoutEngine.constraints - INFO -   Generating aspect hard exclusion (north-facing, slope\u22655░, lat=20.0░)...
+2026-03-07 18:36:36 - PVLayoutEngine.constraints - INFO -   North-facing exclusion: 9.4% of raster
+2026-03-07 18:36:36 - PVLayoutEngine.constraints - INFO -   North-facing exclusion: 468 polygons generated.
+2026-03-07 18:36:36 - PVLayoutEngine.constraints - INFO -   Converting roughness_tri raster to exclusion polygons (threshold=1.5)...
+2026-03-07 18:36:36 - PVLayoutEngine.constraints - INFO -   roughness_tri: 5.8% of raster pixels excluded
+2026-03-07 18:36:37 - PVLayoutEngine.constraints - INFO -   Converting terrain_valley_tpi raster to exclusion polygons (threshold=-2.0)...
+2026-03-07 18:36:37 - PVLayoutEngine.constraints - INFO -   terrain_valley_tpi: 14.9% of raster pixels excluded
+2026-03-07 18:36:37 - PVLayoutEngine.constraints - INFO -   Curvature exclusion: 0.1% of raster pixels excluded (|curv|>0.4)
+2026-03-07 18:36:37 - PVLayoutEngine.constraints - INFO -   Applying D8 Flow Accumulation streams with 30m buffer...
+2026-03-07 18:36:37 - PVLayoutEngine.constraints - INFO -   Applying 10m inward setback from site boundary...
+2026-03-07 18:36:37 - PVLayoutEngine.constraints - INFO -   Applying 50m edge buffer to forest exclusions (BD-06)...
+2026-03-07 18:36:37 - PVLayoutEngine.constraints - INFO - Merging exclusion geometries...
+2026-03-07 18:36:37 - PVLayoutEngine.constraints - INFO - Subtracting exclusions from site boundary...
+2026-03-07 18:36:37 - PVLayoutEngine.constraints - INFO - Buildable area: 94.44 ha (55.6% of site, min patch \u22655.0 ha)
+2026-03-07 18:36:37 - PVLayoutEngine.constraints - INFO -   Exclusion ù forest_edge_buffer: 29.97 ha
+2026-03-07 18:36:37 - PVLayoutEngine.constraints - INFO -   Exclusion ù lulc_Tree cover: 3.45 ha
+2026-03-07 18:36:37 - PVLayoutEngine.constraints - INFO -   Exclusion ù site_setback: 9.84 ha
+2026-03-07 18:36:37 - PVLayoutEngine.constraints - INFO -   Exclusion ù terrain_north_facing: 16.00 ha
+2026-03-07 18:36:37 - PVLayoutEngine.constraints - INFO -   Exclusion ù terrain_roughness_tri: 1.11 ha
+2026-03-07 18:36:37 - PVLayoutEngine.constraints - INFO -   Exclusion ù terrain_streams_d8: 27.89 ha
+2026-03-07 18:36:37 - PVLayoutEngine.constraints - INFO -   Exclusion ù terrain_terrain_valley_tpi: 21.43 ha
+2026-03-07 18:36:37 - PVLayoutEngine - INFO - ==================================================
+2026-03-07 18:36:37 - PVLayoutEngine - INFO -   PHASE 4: CAPACITY FEASIBILITY
+2026-03-07 18:36:37 - PVLayoutEngine - INFO - ==================================================
+2026-03-07 18:36:37 - PVLayoutEngine.analysis - INFO - Calculating feasible solar capacity (block-based)...
+2026-03-07 18:36:37 - PVLayoutEngine.analysis - INFO -   Buildable area: 94.44 ha
+2026-03-07 18:36:37 - PVLayoutEngine.analysis - INFO -   Usable area (85%): 80.27 ha
+2026-03-07 18:36:37 - PVLayoutEngine.analysis - INFO -   Max blocks: 32 ╫ 2.5 ha
+2026-03-07 18:36:37 - PVLayoutEngine.analysis - INFO -   Max feasible: 102.4 MWac / 124.9 MWdc
+2026-03-07 18:36:37 - PVLayoutEngine.analysis - INFO -   Requested: 60.0 MWdc (49.2 MWac)
+2026-03-07 18:36:37 - PVLayoutEngine.analysis - INFO -   \u2713 Site is FEASIBLE for the requested capacity.
+2026-03-07 18:36:37 - PVLayoutEngine - INFO - ==================================================
+2026-03-07 18:36:37 - PVLayoutEngine - INFO -   PHASE 5: BOP ZONE RESERVATION
+2026-03-07 18:36:37 - PVLayoutEngine - INFO - ==================================================
+2026-03-07 18:36:37 - PVLayoutEngine - INFO - Using user-defined POI string from config: [95.259394, 19.986376]
+2026-03-07 18:36:37 - PVLayoutEngine.bop - INFO - === BOP Zone Reservation (runs BEFORE panel layout) ===
+2026-03-07 18:36:37 - PVLayoutEngine.bop - INFO -   BOP siting: evaluating 320 candidates (168 boundary + 152 interior)
+2026-03-07 18:36:43 - PVLayoutEngine.bop - INFO -   Substation sited at (736373.6, 2211569.8), slope=1.1░
+2026-03-07 18:36:43 - PVLayoutEngine.bop - INFO -   Substation compound: 80m ╫ 60m
+2026-03-07 18:36:43 - PVLayoutEngine.bop - INFO -   BESS compound:       60m ╫ 30m (10 MW / 20 MWh)
+2026-03-07 18:36:43 - PVLayoutEngine.bop - INFO -   O&M compound:        100m ╫ 50m
+2026-03-07 18:36:43 - PVLayoutEngine.bop - INFO -   BOP zone total area: 2.43 ha (including 20 m access buffer)
+2026-03-07 18:36:43 - PVLayoutEngine.bop - INFO -   Removed 2.43 ha from buildable area for BOP zone \u2192 92.00 ha remaining for PV layout
+2026-03-07 18:36:43 - PVLayoutEngine - INFO - ==================================================
+2026-03-07 18:36:43 - PVLayoutEngine - INFO -   PHASE 5.5: INFRASTRUCTURE CORRIDOR PLANNING
+2026-03-07 18:36:43 - PVLayoutEngine - INFO - ==================================================
+2026-03-07 18:36:43 - PVLayoutEngine.corridors - INFO - === Infrastructure Corridor Planning ===
+2026-03-07 18:36:43 - PVLayoutEngine.corridors - INFO -   Generating terrain-aware spine road...
+2026-03-07 18:36:43 - PVLayoutEngine.corridors - INFO -   Main collector: 1690m, corridor width: 10m
+2026-03-07 18:36:43 - PVLayoutEngine.corridors - INFO -   Secondary branches: 7 corridors, spacing: 211m, width: 8m
+2026-03-07 18:36:44 - PVLayoutEngine.corridors - INFO -   Tertiary aisles: 30 terrain-guided aisles generated (width 6m, slope-search step 10m)
+2026-03-07 18:36:44 - PVLayoutEngine.corridors - INFO -   Total corridor area: 15.23 ha
+2026-03-07 18:36:45 - PVLayoutEngine.corridors - INFO -   Subtracted 15.23 ha corridors from buildable area \u2192 76.75 ha for PV layout
+2026-03-07 18:36:45 - PVLayoutEngine - INFO - ==================================================
+2026-03-07 18:36:45 - PVLayoutEngine - INFO -   PHASE 6: LAYOUT GENERATION
+2026-03-07 18:36:45 - PVLayoutEngine - INFO - ==================================================
+2026-03-07 18:36:45 - PVLayoutEngine.layout - INFO - Generating tessellated PV rows and clustering into Power Blocks...
+2026-03-07 18:36:45 - PVLayoutEngine.layout - INFO -   Site latitude: 19.99░ ù winter solar elevation: 46.5░
+2026-03-07 18:36:45 - PVLayoutEngine.layout - INFO -   Row pitch from GCR (0.38): 12.55 m (table depth 4.768 m / GCR 0.38)
+2026-03-07 18:36:45 - PVLayoutEngine.layout - INFO -   \u2713 No-shade check passed (no-shade pitch = 6.27 m \u2264 12.55 m)
+2026-03-07 18:36:45 - PVLayoutEngine.layout - INFO -   Table: 4.768 m tilted ╫ 36.48 m E-W (2 strings ╫ 18.24 m)
+2026-03-07 18:36:45 - PVLayoutEngine.layout - INFO -   Table ground depth (N-S): 4.285 m
+2026-03-07 18:36:45 - PVLayoutEngine.layout - INFO -   Block: 10 inverters ╫ 22 strings = 220 strings/block, rows needed \u2248 110
+2026-03-07 18:36:45 - PVLayoutEngine.layout - INFO -   Target Power Block: 3.912 MWdc / 3.200 MWac (220 strings)
+2026-03-07 18:37:29 - PVLayoutEngine.layout - INFO -   Generated 1032 total rows (2064 strings).
+2026-03-07 18:37:29 - PVLayoutEngine.layout - INFO -   Clustering rows into ~9 spatial Power Blocks (K-Means)...
+2026-03-07 18:37:36 - PVLayoutEngine.layout - INFO -   Target limit applied: 49.18 MWac \u2192 15 full blocks needed.
+2026-03-07 18:37:36 - PVLayoutEngine.layout - INFO - Generated 8 blocks / 781 PV rows: 22.72 MWac / 27.77 MWdc (DC/AC = 1.22)
+Traceback (most recent call last):
+  File "D:\Triune\Stack Space - Documents\Code\PVLayoutEngine\main_pipeline.py", line 375, in <module>
+    run_pipeline(args.boundary, args.capacity_mw, args.config)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Triune\Stack Space - Documents\Code\PVLayoutEngine\main_pipeline.py", line 202, in run_pipeline
+    blocks_gdf, rows_gdf, _ = generate_solar_blocks(corridor_reduced_gdf, config, terrain_paths)
+    ^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: not enough values to unpack (expected 3, got 2)

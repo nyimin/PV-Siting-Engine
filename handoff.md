@@ -157,30 +157,31 @@ Phase 1→2→3→4 (unchanged) → Phase 5: BOP → Phase 5.5: Corridors → Ph
 
 ---
 
-### Phase 7 — Myinsai Scope & Requirements Alignment COMPLETE ✅
+### Phase 7 — Target Capacity Alignment COMPLETE ✅
 
-| Task                           | Change                                                                                                                                                                | Files                       |
-| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------- |
-| 7.1 Target Capacity Constraint | Enforced an absolute layout limit of 16 contiguous blocks (51.2 MWac) by scoring and retaining only the flattest terrain clusters closest to the substation.          | `layout/block_generator.py` |
-| 7.2 Internal Access Roads      | Carved out a 6m-wide "canyon" directly through the centroid of all 3.2 MWac blocks, splitting the modules to allow for internal vehicle access.                       | `layout/block_generator.py` |
-| 7.3 Virtual Central Skids      | Positioned the Block Transformer and exactly 10 clustered String Inverters squarely inside the new internal access road, fulfilling standard commercial array design. | `layout/bop_placement.py`   |
-| 7.4 Homerun MV Feeders         | Updated the electrical topology to strictly enforce 1 block = 1 feeder homerun routing (16 independent 33kV loops terminating directly at the substation).            | `config/config.yaml`        |
+| Task                           | Change                                                                                                                                                                                     | Files                       |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------- |
+| 7.1 Target Capacity Constraint | Enforced an absolute layout limit (e.g., 60.0 MWdc) by dynamically slicing out exact string counts from the threshold block to precisely match requested capacity without wasting terrain. | `layout/block_generator.py` |
+| 7.2 Internal Access Roads      | Carved out a 6m-wide "canyon" directly through the centroid of all 3.2 MWac blocks, splitting the modules to allow for internal vehicle access.                                            | `layout/block_generator.py` |
+| 7.3 Virtual Central Skids      | Positioned the Block Transformer and exactly 10 clustered String Inverters squarely inside the new internal access road, fulfilling standard commercial array design.                      | `layout/bop_placement.py`   |
+| 7.4 MV Feeder Sequence         | Updated the electrical topology to support both 1-to-1 and daisy-chain routing depending on config. Final implementation favors daisy-chaining along road corridors.                       | `config/config.yaml`        |
+| 7.5 Global Block Clustering    | Shifted 2D Region-Growing logic to process adjacency _globally_ across the entire buildable area instead of restricting it blindly by internal paddock boundaries.                         | `layout/block_generator.py` |
 
 **Key changes:**
 
-- The pipeline no longer blindly maximizes capacity across the buildable area. It strictly generates the 16 best commercial utility blocks to match the target 51.2 MWac.
-- The map visuals (`layout_map.html`) strictly enforce 1-to-1 independent feeder plotting with zero daisy-chaining.
-- The modules within the block are split by an explicit intra-block road.
+- The pipeline no longer blindly maximizes capacity across the buildable area. It strictly generates the best commercial utility blocks to exactly match the target capacity.
+- Modules within the blocks are split by an explicit intra-block road.
+- Eliminated artificial capacity constraints created by "stranded" terrain segments bounded by internal roads, unlocking significantly more layout options.
 
 ---
 
-### Phase 8 — Post-Audit Alignment & Routing Polish COMPLETE ✅
+### Phase 8 — Post-Audit Alignment & Routing Polish ✅
 
-| Task                             | Change                                                                                                                                                                                                                          | Files                        |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
-| 8.1 Terrain-Aware A\* Spine Road | Reverted the rigidly straight-line mathematical road approximation to a terrain-aware A\* pathfinding algorithm (`AStarTerrainGrid` on a 10m grid) strictly bound within valid buildable area logic.                            | `layout/corridor_planner.py` |
-| 8.2 Daisy-Chain MV Cabling       | Transitioned MV cable paths from complex radial star networks to commercial daisy-chain topologies directly navigating along the established road graph.                                                                        | `layout/routing.py`          |
-| 8.3 Exact Paddock Clipping       | The clustering algorithm mathematically leaked across road corridors due to a naive `convex_hull`. The block envelopes are now strictly intersected with their parent `paddock_geom` to physically prevent road/panel overlaps. | `layout/block_generator.py`  |
+| Task                             | Change                                                                                                                                                                                               | Files                        |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
+| 8.1 Terrain-Aware A\* Spine Road | Reverted the rigidly straight-line mathematical road approximation to a terrain-aware A\* pathfinding algorithm (`AStarTerrainGrid` on a 10m grid) strictly bound within valid buildable area logic. | `layout/corridor_planner.py` |
+| 8.2 Daisy-Chain MV Cabling       | Transitioned MV cable paths from complex radial star networks to commercial daisy-chain topologies directly navigating along the established road graph.                                             | `layout/routing.py`          |
+| 8.3 Exact Paddock Clipping       | The block envelopes are now strictly intersected with their parent `paddock_geom` to physically prevent road/panel overlaps.                                                                         | `layout/block_generator.py`  |
 
 **Key changes:**
 
@@ -189,24 +190,33 @@ Phase 1→2→3→4 (unchanged) → Phase 5: BOP → Phase 5.5: Corridors → Ph
 
 ---
 
-## 4. Remaining Phases
+### Phase 9 — "Bankable" Engineering Refactors (R1-R4) COMPLETE ✅
 
-_(All roadmap phases and explicit Myinsai user alignments are now fully implemented. Feature 6.4 multi-objective runs are stretch targets for future versions)._
+| Refactor                            | Change                                                                                                                                                                                                      | Files                                                     |
+| ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| R1. Grid-Shift Origin Optimizer     | Introduced a search phase (`_score_origin`) to test grid (dx, dy) offsets before tessellation, recovering previously lost edge capacity due to strict bounding box overlap requirements.                    | `layout/block_generator.py`                               |
+| R2. Road-First Tessellation         | Replaced post-tessellation centroid "canyon carving" with terrain-aware tertiary aisle generation (`_generate_tertiary_aisles`). Aisles are carved to align with the lowest-slope N-S axis within paddocks. | `layout/corridor_planner.py`, `layout/block_generator.py` |
+| R3. BOP-to-Layout Feedback Loop     | Added "Phase 7 Feedback Block" to re-site the substation/BOP zone using the calculated Electrical Centre of Gravity (ECG). Re-runs layout generation if the ECG offset exceeds the configured threshold.    | `main_pipeline.py`                                        |
+| R4. PySAM High-Fidelity Yield Model | Replaced the simple PVWatts API call with a 3-tier engine: PySAM (with 3D near-shading and slope-adjusted tilt), PVWatts API (fallback), and a rough latitude proxy (offline fallback).                     | `layout/yield_model.py`, `analysis/metrics.py`            |
+
+**Key changes:**
+
+- Capacity recovery via optimal tessellation origin.
+- Civil-compliant intra-block roads guided by actual terrain rather than block centroids.
+- Automated pipeline sequence feedback (dynamically optimizing BOP location to minimize cable runs).
+- Bankable-grade yield estimation capable of handling localized shading and slope modifications using NREL's `pysam`.
 
 ---
 
-### Phase 6 — Advanced Layout Optimisation (3–4 weeks)
+## 4. Future Roadmap & Stretch Goals
 
-**Goal:** Terrain-aware block clustering and multi-objective layout scoring.
+_(Full roadmap phases and explicit Myinsai user alignments are now fully implemented. Future work focus on performance and multi-scenario optimization)._
 
-| Task                             | Priority | Description                                                                                                                                                                           |
-| -------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 6.1 Variable block sizing        | HIGH     | Allow blocks to vary in row count while maintaining minimum fill fraction. Currently all tessellation cells are equal-sized, creating many undersized fragments.                      |
-| 6.2 Oblique tessellation         | MED      | Rotate tessellation grid to align with dominant buildable area orientation (principal axis), reducing edge waste. **Phase 3's `_long_axis_direction()` already computes this angle.** |
-| 6.3 Economic layout scoring      | LOW      | Score layouts by total cost = (MV cable × $/m) + (road × $/m) + (earthworks × $/m³) + (panels × $/Wp).                                                                                |
-| 6.4 Multi-objective optimisation | LOW      | Iterate placement with simulated annealing or genetic algorithm to maximise energy yield while minimising infrastructure cost.                                                        |
-
-**Key files:** `layout/block_generator.py` (main target), `analysis/metrics.py` (for economic scoring)
+| Task                             | Priority | Description                                                                                                                    |
+| -------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| 6.4 Multi-objective optimisation | LOW      | Iterate placement with simulated annealing or genetic algorithm to maximise energy yield while minimising infrastructure cost. |
+| 9.1 DXF/DWG Export               | MED      | Direct export of engineering geometry to CAD formats.                                                                          |
+| 9.2 Real-time Slope Checking     | LOW      | Interactive feedback on slope violations during manual layout adjustments.                                                     |
 
 ---
 

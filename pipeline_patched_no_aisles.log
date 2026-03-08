@@ -1,0 +1,357 @@
+2026-03-07 18:44:37 - PVLayoutEngine - INFO - ============================================================
+2026-03-07 18:44:37 - PVLayoutEngine - INFO -   PV Layout Engine Pipeline ù Starting
+2026-03-07 18:44:37 - PVLayoutEngine - INFO - ============================================================
+2026-03-07 18:44:37 - PVLayoutEngine.caching - INFO -   Cache status:
+2026-03-07 18:44:37 - PVLayoutEngine.caching - INFO -     dem: 1 files, 0.08 MB
+2026-03-07 18:44:37 - PVLayoutEngine.caching - INFO -     worldcover: 2 files, 158.52 MB
+2026-03-07 18:44:37 - PVLayoutEngine.caching - INFO -     osm: 5 files, 0.0 MB
+2026-03-07 18:44:37 - PVLayoutEngine - INFO - Loading site boundary from inputs/project_boundary.gpkg
+2026-03-07 18:44:37 - PVLayoutEngine - INFO - Auto-detected UTM CRS: EPSG:32646
+2026-03-07 18:44:37 - PVLayoutEngine - INFO - Reprojecting site from EPSG:4326 to EPSG:32646
+2026-03-07 18:44:37 - PVLayoutEngine - INFO - Site area: 169.71 ha
+2026-03-07 18:44:37 - PVLayoutEngine - INFO - ==================================================
+2026-03-07 18:44:37 - PVLayoutEngine - INFO -   PHASE 1: DATA ACQUISITION
+2026-03-07 18:44:37 - PVLayoutEngine - INFO - ==================================================
+2026-03-07 18:44:37 - PVLayoutEngine.dem - INFO - Fetching DEM data (best available resolution)...
+2026-03-07 18:44:37 - PVLayoutEngine.dem - INFO - OpenTopography API key loaded from .env.
+D:\Triune\Stack Space - Documents\Code\PVLayoutEngine\terrain\dem_downloader.py:167: UserWarning: Geometry is in a geographic CRS. Results from 'buffer' are likely incorrect. Use 'GeoSeries.to_crs()' to re-project geometries to a projected CRS before this operation.
+
+  buffered_site = site_wgs84.buffer(0.01)
+2026-03-07 18:44:38 - PVLayoutEngine.dem - INFO - Loading Copernicus DEM GLO-30 (30m) from cache: data/cache\dem\dem_COP30_95.24_19.972_95.277_20.01.tif
+2026-03-07 18:44:38 - PVLayoutEngine.dem - INFO -   DEM resolution: ~30.0 m/pixel
+2026-03-07 18:44:38 - PVLayoutEngine.dem - INFO -   DEM size: 136╫137 pixels
+2026-03-07 18:44:38 - PVLayoutEngine.dem - INFO -   DEM CRS: EPSG:4326
+2026-03-07 18:44:38 - PVLayoutEngine.dem - INFO -   DEM bounds: BoundingBox(left=95.23930554444442, bottom=19.97236112222222, right=95.2770833222222, top=20.010416677777776)
+2026-03-07 18:44:38 - PVLayoutEngine.dem - WARNING -   DEM WARNING: DEM resolution (30.0m) is poor (>20m). Layout placement precision is downgraded and terrain analysis uncertainty is high.
+2026-03-07 18:44:38 - PVLayoutEngine.lulc - INFO - Fetching ESA WorldCover 2021 (10m)...
+2026-03-07 18:44:38 - PVLayoutEngine.lulc - INFO - Loading WorldCover from cache: data/cache\worldcover\worldcover_95.25_19.982_95.267_20.0.tif
+2026-03-07 18:44:38 - PVLayoutEngine.osm - INFO - Fetching OpenStreetMap constraints...
+2026-03-07 18:44:38 - PVLayoutEngine.osm - INFO -   Fetching OSM layer: buildings
+2026-03-07 18:44:38 - PVLayoutEngine.osm - WARNING -   Error fetching buildings: No matching features. Check query location, tags, and log.
+2026-03-07 18:44:38 - PVLayoutEngine.osm - INFO -   Fetching OSM layer: water
+2026-03-07 18:44:38 - PVLayoutEngine.osm - WARNING -   Error fetching water: No matching features. Check query location, tags, and log.
+2026-03-07 18:44:38 - PVLayoutEngine.osm - INFO -   Fetching OSM layer: roads
+2026-03-07 18:44:39 - PVLayoutEngine.osm - WARNING -   Error fetching roads: No matching features. Check query location, tags, and log.
+2026-03-07 18:44:39 - PVLayoutEngine.osm - INFO -   Fetching OSM layer: railways
+2026-03-07 18:44:39 - PVLayoutEngine.osm - WARNING -   Error fetching railways: No matching features. Check query location, tags, and log.
+2026-03-07 18:44:39 - PVLayoutEngine.osm - INFO -   Fetching OSM layer: power
+2026-03-07 18:44:39 - PVLayoutEngine.osm - WARNING -   Error fetching power: No matching features. Check query location, tags, and log.
+2026-03-07 18:44:39 - PVLayoutEngine.osm - INFO - Saving newly fetched geometries to cache: data/cache\osm\osm_constraints_2306ac9350fc.gpkg
+2026-03-07 18:44:39 - PVLayoutEngine.constraints - INFO - Processing OSM constraints...
+2026-03-07 18:44:39 - PVLayoutEngine - INFO - ==================================================
+2026-03-07 18:44:39 - PVLayoutEngine - INFO -   PHASE 2: TERRAIN ANALYSIS
+2026-03-07 18:44:39 - PVLayoutEngine - INFO - ==================================================
+2026-03-07 18:44:39 - PVLayoutEngine.terrain - INFO - Processing terrain analysis from data/cache\dem\dem_COP30_95.24_19.972_95.277_20.01.tif
+2026-03-07 18:44:39 - PVLayoutEngine.terrain - INFO -   Reprojecting DEM from EPSG:4326 to EPSG:32646 at 10.0m resolution (cubic resampling)
+2026-03-07 18:44:39 - PVLayoutEngine.terrain - INFO -   Reprojected DEM saved to: data\processed\terrain\dem_utm.tif
+2026-03-07 18:44:39 - PVLayoutEngine.terrain - INFO -   UTM cell size: 10.00 ╫ 10.00 m
+2026-03-07 18:44:39 - PVLayoutEngine.terrain - INFO -   Applying Gaussian smoothing (sigma=1.0) to remove high-frequency DEM noise...
+2026-03-07 18:44:39 - PVLayoutEngine.terrain - INFO -   Site latitude: 19.991░
+2026-03-07 18:44:39 - PVLayoutEngine.terrain - INFO -   Calculating Slope (degrees, Horn's method)...
+2026-03-07 18:44:39 - PVLayoutEngine.terrain - INFO -   Calculating Aspect...
+2026-03-07 18:44:39 - PVLayoutEngine.terrain - INFO -   Calculating TRI...
+2026-03-07 18:44:40 - PVLayoutEngine.terrain - INFO -   Calculating Curvature...
+2026-03-07 18:44:40 - PVLayoutEngine.terrain - INFO -   Calculating TPI (radius=15 pixels)...
+2026-03-07 18:44:40 - PVLayoutEngine.terrain - INFO -   Calculating Hillshade...
+2026-03-07 18:44:40 - PVLayoutEngine.terrain - INFO -   Calculating D8 Flow Accumulation (PySheds)...
+2026-03-07 18:44:49 - PVLayoutEngine.terrain - INFO -     Setting up PySheds grid from: data\processed\terrain\dem_utm.tif
+C:\Users\nyimi\miniconda3\Lib\site-packages\pysheds\io.py:134: UserWarning: No `nodata` value detected. Defaulting to 0.
+  warnings.warn('No `nodata` value detected. Defaulting to 0.')
+C:\Users\nyimi\miniconda3\Lib\site-packages\pysheds\io.py:134: UserWarning: No `nodata` value detected. Defaulting to 0.
+  warnings.warn('No `nodata` value detected. Defaulting to 0.')
+2026-03-07 18:44:49 - PVLayoutEngine.terrain - INFO -     Resolving depressions and flats...
+2026-03-07 18:44:50 - PVLayoutEngine.terrain - INFO -     Calculating D8 flow direction...
+2026-03-07 18:44:50 - PVLayoutEngine.terrain - INFO -     Calculating D8 flow accumulation...
+2026-03-07 18:44:50 - PVLayoutEngine.terrain - INFO -   Calculating Topographic Wetness Index (TWI)...
+2026-03-07 18:44:50 - PVLayoutEngine.terrain - INFO -   Calculating Suitability Scores (0û3 scale)...
+2026-03-07 18:44:51 - PVLayoutEngine.terrain - INFO -   --- Terrain Summary ---
+2026-03-07 18:44:51 - PVLayoutEngine.terrain - INFO -   Mean slope:      6.12░
+2026-03-07 18:44:51 - PVLayoutEngine.terrain - INFO -   Max slope:       82.02░
+2026-03-07 18:44:51 - PVLayoutEngine.terrain - INFO -   Std slope:       13.16░
+2026-03-07 18:44:51 - PVLayoutEngine.terrain - INFO -   Mean TRI:        1.47 m
+2026-03-07 18:44:51 - PVLayoutEngine.terrain - INFO -   Mean suitability index:  2.15 / 3.0
+2026-03-07 18:44:51 - PVLayoutEngine.terrain - INFO -   Buildable area (index\u22652.25): 54.1% of raster
+2026-03-07 18:44:51 - PVLayoutEngine.terrain - INFO - Terrain analysis outputs saved to data\processed\terrain
+2026-03-07 18:44:51 - PVLayoutEngine - INFO - ==================================================
+2026-03-07 18:44:51 - PVLayoutEngine - INFO -   PHASE 3: CONSTRAINTS & BUILDABLE AREA
+2026-03-07 18:44:51 - PVLayoutEngine - INFO - ==================================================
+2026-03-07 18:44:51 - PVLayoutEngine.lulc - INFO - Extracting WorldCover exclusion zones...
+2026-03-07 18:44:51 - rasterio._env - WARNING - CPLE_AppDefined in DeprecationWarning: 'Memory' driver is deprecated since GDAL 3.11. Use 'MEM' onwards. Further messages of this type will be suppressed.
+2026-03-07 18:44:51 - PVLayoutEngine.lulc - INFO -   Extracted 29 WorldCover exclusion polygons.
+2026-03-07 18:44:51 - PVLayoutEngine.constraints - INFO - Combining all constraints...
+2026-03-07 18:44:51 - PVLayoutEngine.constraints - INFO -   Converting steep_slope raster to exclusion polygons (threshold=15)...
+2026-03-07 18:44:51 - PVLayoutEngine.constraints - INFO -   steep_slope: 5.1% of raster pixels excluded
+2026-03-07 18:44:51 - PVLayoutEngine.constraints - INFO -   Generating aspect hard exclusion (north-facing, slope\u22655░, lat=20.0░)...
+2026-03-07 18:44:51 - PVLayoutEngine.constraints - INFO -   North-facing exclusion: 9.4% of raster
+2026-03-07 18:44:51 - PVLayoutEngine.constraints - INFO -   North-facing exclusion: 468 polygons generated.
+2026-03-07 18:44:51 - PVLayoutEngine.constraints - INFO -   Converting roughness_tri raster to exclusion polygons (threshold=1.5)...
+2026-03-07 18:44:51 - PVLayoutEngine.constraints - INFO -   roughness_tri: 5.8% of raster pixels excluded
+2026-03-07 18:44:51 - PVLayoutEngine.constraints - INFO -   Converting terrain_valley_tpi raster to exclusion polygons (threshold=-2.0)...
+2026-03-07 18:44:51 - PVLayoutEngine.constraints - INFO -   terrain_valley_tpi: 14.9% of raster pixels excluded
+2026-03-07 18:44:51 - PVLayoutEngine.constraints - INFO -   Curvature exclusion: 0.1% of raster pixels excluded (|curv|>0.4)
+2026-03-07 18:44:51 - PVLayoutEngine.constraints - INFO -   Applying D8 Flow Accumulation streams with 30m buffer...
+2026-03-07 18:44:52 - PVLayoutEngine.constraints - INFO -   Applying 10m inward setback from site boundary...
+2026-03-07 18:44:52 - PVLayoutEngine.constraints - INFO -   Applying 50m edge buffer to forest exclusions (BD-06)...
+2026-03-07 18:44:52 - PVLayoutEngine.constraints - INFO - Merging exclusion geometries...
+2026-03-07 18:44:52 - PVLayoutEngine.constraints - INFO - Subtracting exclusions from site boundary...
+2026-03-07 18:44:52 - PVLayoutEngine.constraints - INFO - Buildable area: 94.44 ha (55.6% of site, min patch \u22655.0 ha)
+2026-03-07 18:44:52 - PVLayoutEngine.constraints - INFO -   Exclusion ù forest_edge_buffer: 29.97 ha
+2026-03-07 18:44:52 - PVLayoutEngine.constraints - INFO -   Exclusion ù lulc_Tree cover: 3.45 ha
+2026-03-07 18:44:52 - PVLayoutEngine.constraints - INFO -   Exclusion ù site_setback: 9.84 ha
+2026-03-07 18:44:52 - PVLayoutEngine.constraints - INFO -   Exclusion ù terrain_north_facing: 16.00 ha
+2026-03-07 18:44:52 - PVLayoutEngine.constraints - INFO -   Exclusion ù terrain_roughness_tri: 1.11 ha
+2026-03-07 18:44:52 - PVLayoutEngine.constraints - INFO -   Exclusion ù terrain_streams_d8: 27.89 ha
+2026-03-07 18:44:52 - PVLayoutEngine.constraints - INFO -   Exclusion ù terrain_terrain_valley_tpi: 21.43 ha
+2026-03-07 18:44:52 - PVLayoutEngine - INFO - ==================================================
+2026-03-07 18:44:52 - PVLayoutEngine - INFO -   PHASE 4: CAPACITY FEASIBILITY
+2026-03-07 18:44:52 - PVLayoutEngine - INFO - ==================================================
+2026-03-07 18:44:52 - PVLayoutEngine.analysis - INFO - Calculating feasible solar capacity (block-based)...
+2026-03-07 18:44:52 - PVLayoutEngine.analysis - INFO -   Buildable area: 94.44 ha
+2026-03-07 18:44:52 - PVLayoutEngine.analysis - INFO -   Usable area (85%): 80.27 ha
+2026-03-07 18:44:52 - PVLayoutEngine.analysis - INFO -   Max blocks: 32 ╫ 2.5 ha
+2026-03-07 18:44:52 - PVLayoutEngine.analysis - INFO -   Max feasible: 102.4 MWac / 124.9 MWdc
+2026-03-07 18:44:52 - PVLayoutEngine.analysis - INFO -   Requested: 60.0 MWdc (49.2 MWac)
+2026-03-07 18:44:52 - PVLayoutEngine.analysis - INFO -   \u2713 Site is FEASIBLE for the requested capacity.
+2026-03-07 18:44:52 - PVLayoutEngine - INFO - ==================================================
+2026-03-07 18:44:52 - PVLayoutEngine - INFO -   PHASE 5: BOP ZONE RESERVATION
+2026-03-07 18:44:52 - PVLayoutEngine - INFO - ==================================================
+2026-03-07 18:44:52 - PVLayoutEngine - INFO - Using user-defined POI string from config: [95.259394, 19.986376]
+2026-03-07 18:44:52 - PVLayoutEngine.bop - INFO - === BOP Zone Reservation (runs BEFORE panel layout) ===
+2026-03-07 18:44:52 - PVLayoutEngine.bop - INFO -   BOP siting: evaluating 320 candidates (168 boundary + 152 interior)
+2026-03-07 18:44:57 - PVLayoutEngine.bop - INFO -   Substation sited at (736373.6, 2211569.8), slope=1.1░
+2026-03-07 18:44:57 - PVLayoutEngine.bop - INFO -   Substation compound: 80m ╫ 60m
+2026-03-07 18:44:57 - PVLayoutEngine.bop - INFO -   BESS compound:       60m ╫ 30m (10 MW / 20 MWh)
+2026-03-07 18:44:57 - PVLayoutEngine.bop - INFO -   O&M compound:        100m ╫ 50m
+2026-03-07 18:44:57 - PVLayoutEngine.bop - INFO -   BOP zone total area: 2.43 ha (including 20 m access buffer)
+2026-03-07 18:44:57 - PVLayoutEngine.bop - INFO -   Removed 2.43 ha from buildable area for BOP zone \u2192 92.00 ha remaining for PV layout
+2026-03-07 18:44:57 - PVLayoutEngine - INFO - ==================================================
+2026-03-07 18:44:57 - PVLayoutEngine - INFO -   PHASE 5.5: INFRASTRUCTURE CORRIDOR PLANNING
+2026-03-07 18:44:57 - PVLayoutEngine - INFO - ==================================================
+2026-03-07 18:44:57 - PVLayoutEngine.corridors - INFO - === Infrastructure Corridor Planning ===
+2026-03-07 18:44:57 - PVLayoutEngine.corridors - INFO -   Generating terrain-aware spine road...
+2026-03-07 18:44:57 - PVLayoutEngine.corridors - INFO -   Main collector: 1690m, corridor width: 10m
+2026-03-07 18:44:57 - PVLayoutEngine.corridors - INFO -   Secondary branches: 7 corridors, spacing: 211m, width: 8m
+2026-03-07 18:44:57 - PVLayoutEngine.corridors - INFO -   Tertiary aisles disabled (roads.tertiary_aisles_enabled: false). Intra-block roads will be carved geometrically post-layout.
+2026-03-07 18:44:57 - PVLayoutEngine.corridors - INFO -   Total corridor area: 3.41 ha
+2026-03-07 18:44:57 - PVLayoutEngine.corridors - INFO -   Subtracted 3.41 ha corridors from buildable area \u2192 88.60 ha for PV layout
+2026-03-07 18:44:57 - PVLayoutEngine - INFO - ==================================================
+2026-03-07 18:44:57 - PVLayoutEngine - INFO -   PHASE 6: LAYOUT GENERATION
+2026-03-07 18:44:57 - PVLayoutEngine - INFO - ==================================================
+2026-03-07 18:44:57 - PVLayoutEngine.layout - INFO - Generating tessellated PV rows and clustering into Power Blocks...
+2026-03-07 18:44:57 - PVLayoutEngine.layout - INFO -   Site latitude: 19.99░ ù winter solar elevation: 46.5░
+2026-03-07 18:44:57 - PVLayoutEngine.layout - INFO -   Row pitch from GCR (0.38): 12.55 m (table depth 4.768 m / GCR 0.38)
+2026-03-07 18:44:57 - PVLayoutEngine.layout - INFO -   \u2713 No-shade check passed (no-shade pitch = 6.27 m \u2264 12.55 m)
+2026-03-07 18:44:57 - PVLayoutEngine.layout - INFO -   Table: 4.768 m tilted ╫ 36.48 m E-W (2 strings ╫ 18.24 m)
+2026-03-07 18:44:57 - PVLayoutEngine.layout - INFO -   Table ground depth (N-S): 4.285 m
+2026-03-07 18:44:57 - PVLayoutEngine.layout - INFO -   Block: 10 inverters ╫ 22 strings = 220 strings/block, rows needed \u2248 110
+2026-03-07 18:44:57 - PVLayoutEngine.layout - INFO -   Target Power Block: 3.912 MWdc / 3.200 MWac (220 strings)
+C:\Users\nyimi\miniconda3\Lib\site-packages\geopandas\tools\overlay.py:358: UserWarning: `keep_geom_type=True` in overlay resulted in 1 dropped geometries of different geometry types than df1 has. Set `keep_geom_type=False` to retain all geometries
+  result = _collection_extract(result, geom_type, keep_geom_type_warning)
+2026-03-07 18:45:27 - PVLayoutEngine.layout - INFO -   Generated 1291 total rows (2582 strings).
+2026-03-07 18:45:27 - PVLayoutEngine.layout - INFO -   Clustering rows into ~12 spatial Power Blocks (K-Means)...
+2026-03-07 18:45:34 - PVLayoutEngine.layout - INFO -   Target limit applied: 49.18 MWac \u2192 15 full blocks needed.
+2026-03-07 18:45:34 - PVLayoutEngine.layout - INFO - Generated 11 blocks / 1098 PV rows: 31.94 MWac / 39.05 MWdc (DC/AC = 1.22)
+2026-03-07 18:45:34 - PVLayoutEngine - INFO - ==================================================
+2026-03-07 18:45:34 - PVLayoutEngine - INFO -   PHASE 7: BALANCE OF PLANT EQUIPMENT
+2026-03-07 18:45:34 - PVLayoutEngine - INFO - ==================================================
+2026-03-07 18:45:34 - PVLayoutEngine.bop - INFO - Placing inverters and transformers (Virtual Central block architecture)...
+2026-03-07 18:45:34 - PVLayoutEngine.bop - INFO - Placed 102 inverters and 11 transformers
+2026-03-07 18:45:34 - PVLayoutEngine.bop - INFO -   Total modules: 61,488
+2026-03-07 18:45:34 - PVLayoutEngine.bop - INFO -   Total strings: 2,196
+2026-03-07 18:45:34 - PVLayoutEngine.bop - INFO -   Total DC capacity: 39.04 MW
+2026-03-07 18:45:34 - PVLayoutEngine - INFO -   R3 Electrical Centre of Gravity: (736418, 2212114) ù 546m from substation
+2026-03-07 18:45:34 - PVLayoutEngine - WARNING -   R3 ECG offset (546m) exceeds threshold (300m). Re-siting BOP using ECG as proximity hint...
+2026-03-07 18:45:34 - PVLayoutEngine.bop - INFO - === BOP Zone Reservation (runs BEFORE panel layout) ===
+2026-03-07 18:45:34 - PVLayoutEngine.bop - INFO -   BOP siting: evaluating 320 candidates (168 boundary + 152 interior)
+2026-03-07 18:45:43 - PVLayoutEngine.bop - INFO -   Substation sited at (736465.2, 2212139.4), slope=0.7░
+2026-03-07 18:45:43 - PVLayoutEngine.bop - INFO -   Substation compound: 80m ╫ 60m
+2026-03-07 18:45:43 - PVLayoutEngine.bop - INFO -   BESS compound:       60m ╫ 30m (10 MW / 20 MWh)
+2026-03-07 18:45:43 - PVLayoutEngine.bop - INFO -   O&M compound:        100m ╫ 50m
+2026-03-07 18:45:43 - PVLayoutEngine.bop - INFO -   BOP zone total area: 2.63 ha (including 20 m access buffer)
+2026-03-07 18:45:43 - PVLayoutEngine.bop - INFO -   Removed 2.63 ha from buildable area for BOP zone \u2192 91.81 ha remaining for PV layout
+2026-03-07 18:45:43 - PVLayoutEngine.corridors - INFO - === Infrastructure Corridor Planning ===
+2026-03-07 18:45:43 - PVLayoutEngine.corridors - INFO -   Generating terrain-aware spine road...
+2026-03-07 18:45:43 - PVLayoutEngine - WARNING -   R3 ECG feedback check failed (non-fatal): 'NoneType' object has no attribute 'length'
+2026-03-07 18:45:43 - PVLayoutEngine.routing - INFO - Routing hierarchical access roads...
+2026-03-07 18:45:43 - PVLayoutEngine.routing - INFO -   Using pre-planned corridor spine road (1690m)
+2026-03-07 18:45:46 - PVLayoutEngine.routing - INFO -   Gradient enforcement: 8883 / 13915 cells exceed 5.0% (2.9░) \u2192 10╫ cost multiplier
+2026-03-07 18:45:46 - PVLayoutEngine.routing - INFO -   Road surface polygons: 2.52 ha total paved area
+2026-03-07 18:45:46 - PVLayoutEngine.routing - INFO -   Access roads: 11 branch + 7 secondary + spine, total 5.46 km
+2026-03-07 18:45:46 - PVLayoutEngine.routing - INFO - Routing MV cables (33kV, road-following, spatial feeders)...
+2026-03-07 18:45:46 - PVLayoutEngine.routing - INFO -   Road graph: 38 nodes, 37 edges
+2026-03-07 18:45:46 - PVLayoutEngine.routing - INFO -   Spatial feeder grouping: 11 transformers \u2192 2 feeders (K-means)
+2026-03-07 18:45:46 - PVLayoutEngine.routing - INFO -   FEEDER_01: 7 blocks, 21.5 MW, 4.7 km, 300mm▓ Al, VD=1.2%
+2026-03-07 18:45:46 - PVLayoutEngine.routing - INFO -   FEEDER_02: 4 blocks, 10.5 MW, 5.4 km, 95mm▓ Al, VD=1.8%
+2026-03-07 18:45:46 - PVLayoutEngine.routing - INFO -   MV cables: 11 transformers \u2192 2 feeders, 10.04 km total, max VD=1.8%
+2026-03-07 18:45:46 - PVLayoutEngine - INFO - ==================================================
+2026-03-07 18:45:46 - PVLayoutEngine - INFO -   PHASE 8: EXPORTS & REPORTING
+2026-03-07 18:45:46 - PVLayoutEngine - INFO - ==================================================
+2026-03-07 18:45:46 - PVLayoutEngine.visualization - INFO - Saving GIS layers...
+2026-03-07 18:45:46 - PVLayoutEngine.visualization - INFO -   Saving site_boundary (1 features)...
+2026-03-07 18:45:46 - pyogrio._io - INFO - Created 1 records
+2026-03-07 18:45:46 - pyogrio._io - INFO - Created 1 records
+2026-03-07 18:45:46 - pyogrio._io - INFO - Created 1 records
+2026-03-07 18:45:46 - PVLayoutEngine.visualization - INFO -   Saving buildable_area (3 features)...
+2026-03-07 18:45:46 - pyogrio._io - INFO - Created 3 records
+2026-03-07 18:45:46 - pyogrio._io - INFO - Created 3 records
+2026-03-07 18:45:46 - pyogrio._io - INFO - Created 3 records
+2026-03-07 18:45:46 - PVLayoutEngine.visualization - INFO -   Saving exclusions (7 features)...
+2026-03-07 18:45:46 - pyogrio._io - INFO - Created 7 records
+D:\Triune\Stack Space - Documents\Code\PVLayoutEngine\visualization\map_generator.py:49: UserWarning: Column names longer than 10 characters will be truncated when saved to ESRI Shapefile.
+  gdf.to_file(os.path.join(shp_dir, f"{name}.shp"))
+C:\Users\nyimi\miniconda3\Lib\site-packages\pyogrio\raw.py:733: RuntimeWarning: Normalized/laundered field name: 'constraint_type' to 'constraint'
+  ogr_write(
+2026-03-07 18:45:46 - pyogrio._io - INFO - Created 7 records
+2026-03-07 18:45:46 - pyogrio._io - INFO - Created 7 records
+2026-03-07 18:45:46 - PVLayoutEngine.visualization - INFO -   Saving solar_blocks (11 features)...
+2026-03-07 18:45:46 - pyogrio._io - INFO - Created 11 records
+D:\Triune\Stack Space - Documents\Code\PVLayoutEngine\visualization\map_generator.py:49: UserWarning: Column names longer than 10 characters will be truncated when saved to ESRI Shapefile.
+  gdf.to_file(os.path.join(shp_dir, f"{name}.shp"))
+C:\Users\nyimi\miniconda3\Lib\site-packages\pyogrio\raw.py:733: RuntimeWarning: Normalized/laundered field name: 'capacity_ac_mw' to 'capacity_a'
+  ogr_write(
+C:\Users\nyimi\miniconda3\Lib\site-packages\pyogrio\raw.py:733: RuntimeWarning: Normalized/laundered field name: 'capacity_dc_mw' to 'capacity_d'
+  ogr_write(
+2026-03-07 18:45:46 - pyogrio._io - INFO - Created 11 records
+2026-03-07 18:45:47 - pyogrio._io - INFO - Created 11 records
+2026-03-07 18:45:47 - PVLayoutEngine.visualization - INFO -   Saving pv_rows (1098 features)...
+2026-03-07 18:45:47 - pyogrio._io - INFO - Created 1,098 records
+2026-03-07 18:45:47 - pyogrio._io - INFO - Created 1,098 records
+2026-03-07 18:45:47 - pyogrio._io - INFO - Created 1,098 records
+2026-03-07 18:45:47 - PVLayoutEngine.visualization - INFO -   Saving inverters (102 features)...
+2026-03-07 18:45:47 - pyogrio._io - INFO - Created 102 records
+D:\Triune\Stack Space - Documents\Code\PVLayoutEngine\visualization\map_generator.py:49: UserWarning: Column names longer than 10 characters will be truncated when saved to ESRI Shapefile.
+  gdf.to_file(os.path.join(shp_dir, f"{name}.shp"))
+C:\Users\nyimi\miniconda3\Lib\site-packages\pyogrio\raw.py:733: RuntimeWarning: Normalized/laundered field name: 'inverter_id' to 'inverter_i'
+  ogr_write(
+C:\Users\nyimi\miniconda3\Lib\site-packages\pyogrio\raw.py:733: RuntimeWarning: Normalized/laundered field name: 'capacity_kw_ac' to 'capacity_k'
+  ogr_write(
+C:\Users\nyimi\miniconda3\Lib\site-packages\pyogrio\raw.py:733: RuntimeWarning: Normalized/laundered field name: 'capacity_kw_dc' to 'capacity_1'
+  ogr_write(
+2026-03-07 18:45:47 - pyogrio._io - INFO - Created 102 records
+2026-03-07 18:45:47 - pyogrio._io - INFO - Created 102 records
+2026-03-07 18:45:47 - PVLayoutEngine.visualization - INFO -   Saving transformers (11 features)...
+2026-03-07 18:45:47 - pyogrio._io - INFO - Created 11 records
+D:\Triune\Stack Space - Documents\Code\PVLayoutEngine\visualization\map_generator.py:49: UserWarning: Column names longer than 10 characters will be truncated when saved to ESRI Shapefile.
+  gdf.to_file(os.path.join(shp_dir, f"{name}.shp"))
+C:\Users\nyimi\miniconda3\Lib\site-packages\pyogrio\raw.py:733: RuntimeWarning: Normalized/laundered field name: 'transformer_id' to 'transforme'
+  ogr_write(
+C:\Users\nyimi\miniconda3\Lib\site-packages\pyogrio\raw.py:733: RuntimeWarning: Normalized/laundered field name: 'capacity_mva' to 'capacity_m'
+  ogr_write(
+C:\Users\nyimi\miniconda3\Lib\site-packages\pyogrio\raw.py:733: RuntimeWarning: Normalized/laundered field name: 'n_inverters' to 'n_inverter'
+  ogr_write(
+2026-03-07 18:45:47 - pyogrio._io - INFO - Created 11 records
+2026-03-07 18:45:47 - pyogrio._io - INFO - Created 11 records
+2026-03-07 18:45:47 - PVLayoutEngine.visualization - INFO -   Saving substation (1 features)...
+2026-03-07 18:45:47 - pyogrio._io - INFO - Created 1 records
+D:\Triune\Stack Space - Documents\Code\PVLayoutEngine\visualization\map_generator.py:49: UserWarning: Column names longer than 10 characters will be truncated when saved to ESRI Shapefile.
+  gdf.to_file(os.path.join(shp_dir, f"{name}.shp"))
+C:\Users\nyimi\miniconda3\Lib\site-packages\pyogrio\raw.py:733: RuntimeWarning: Normalized/laundered field name: 'compound_id' to 'compound_i'
+  ogr_write(
+2026-03-07 18:45:47 - pyogrio._io - INFO - Created 1 records
+2026-03-07 18:45:47 - pyogrio._io - INFO - Created 1 records
+2026-03-07 18:45:47 - PVLayoutEngine.visualization - INFO -   Saving bess (1 features)...
+2026-03-07 18:45:47 - pyogrio._io - INFO - Created 1 records
+D:\Triune\Stack Space - Documents\Code\PVLayoutEngine\visualization\map_generator.py:49: UserWarning: Column names longer than 10 characters will be truncated when saved to ESRI Shapefile.
+  gdf.to_file(os.path.join(shp_dir, f"{name}.shp"))
+C:\Users\nyimi\miniconda3\Lib\site-packages\pyogrio\raw.py:733: RuntimeWarning: Normalized/laundered field name: 'capacity_mw' to 'capacity_m'
+  ogr_write(
+C:\Users\nyimi\miniconda3\Lib\site-packages\pyogrio\raw.py:733: RuntimeWarning: Normalized/laundered field name: 'capacity_mwh' to 'capacity_1'
+  ogr_write(
+2026-03-07 18:45:47 - pyogrio._io - INFO - Created 1 records
+2026-03-07 18:45:47 - pyogrio._io - INFO - Created 1 records
+2026-03-07 18:45:47 - PVLayoutEngine.visualization - INFO -   Saving om_compound (1 features)...
+2026-03-07 18:45:47 - pyogrio._io - INFO - Created 1 records
+D:\Triune\Stack Space - Documents\Code\PVLayoutEngine\visualization\map_generator.py:49: UserWarning: Column names longer than 10 characters will be truncated when saved to ESRI Shapefile.
+  gdf.to_file(os.path.join(shp_dir, f"{name}.shp"))
+C:\Users\nyimi\miniconda3\Lib\site-packages\pyogrio\raw.py:733: RuntimeWarning: Normalized/laundered field name: 'compound_id' to 'compound_i'
+  ogr_write(
+C:\Users\nyimi\miniconda3\Lib\site-packages\pyogrio\raw.py:733: RuntimeWarning: Normalized/laundered field name: 'office_area_m2' to 'office_are'
+  ogr_write(
+C:\Users\nyimi\miniconda3\Lib\site-packages\pyogrio\raw.py:733: RuntimeWarning: Normalized/laundered field name: 'workshop_area_m2' to 'workshop_a'
+  ogr_write(
+C:\Users\nyimi\miniconda3\Lib\site-packages\pyogrio\raw.py:733: RuntimeWarning: Normalized/laundered field name: 'warehouse_area_m2' to 'warehouse_'
+  ogr_write(
+C:\Users\nyimi\miniconda3\Lib\site-packages\pyogrio\raw.py:733: RuntimeWarning: Normalized/laundered field name: 'total_area_m2' to 'total_area'
+  ogr_write(
+2026-03-07 18:45:47 - pyogrio._io - INFO - Created 1 records
+2026-03-07 18:45:47 - pyogrio._io - INFO - Created 1 records
+2026-03-07 18:45:47 - PVLayoutEngine.visualization - INFO -   Saving guard_house (1 features)...
+2026-03-07 18:45:47 - pyogrio._io - INFO - Created 1 records
+D:\Triune\Stack Space - Documents\Code\PVLayoutEngine\visualization\map_generator.py:49: UserWarning: Column names longer than 10 characters will be truncated when saved to ESRI Shapefile.
+  gdf.to_file(os.path.join(shp_dir, f"{name}.shp"))
+C:\Users\nyimi\miniconda3\Lib\site-packages\pyogrio\raw.py:733: RuntimeWarning: Normalized/laundered field name: 'compound_id' to 'compound_i'
+  ogr_write(
+2026-03-07 18:45:47 - pyogrio._io - INFO - Created 1 records
+2026-03-07 18:45:47 - pyogrio._io - INFO - Created 1 records
+2026-03-07 18:45:48 - PVLayoutEngine.visualization - INFO -   Saving internal_roads (19 features)...
+2026-03-07 18:45:48 - pyogrio._io - INFO - Created 19 records
+D:\Triune\Stack Space - Documents\Code\PVLayoutEngine\visualization\map_generator.py:49: UserWarning: Column names longer than 10 characters will be truncated when saved to ESRI Shapefile.
+  gdf.to_file(os.path.join(shp_dir, f"{name}.shp"))
+C:\Users\nyimi\miniconda3\Lib\site-packages\pyogrio\raw.py:733: RuntimeWarning: Normalized/laundered field name: 'corridor_branch_id' to 'corridor_b'
+  ogr_write(
+C:\Users\nyimi\miniconda3\Lib\site-packages\pyogrio\raw.py:733: RuntimeWarning: Normalized/laundered field name: 'road_width_m' to 'road_width'
+  ogr_write(
+C:\Users\nyimi\miniconda3\Lib\site-packages\pyogrio\raw.py:733: RuntimeWarning: Normalized/laundered field name: 'road_surface_m2' to 'road_surfa'
+  ogr_write(
+2026-03-07 18:45:48 - pyogrio._io - INFO - Created 19 records
+2026-03-07 18:45:48 - pyogrio._io - INFO - Created 19 records
+2026-03-07 18:45:48 - PVLayoutEngine.visualization - INFO -   Saving mv_cables (11 features)...
+2026-03-07 18:45:48 - pyogrio._io - INFO - Created 11 records
+D:\Triune\Stack Space - Documents\Code\PVLayoutEngine\visualization\map_generator.py:49: UserWarning: Column names longer than 10 characters will be truncated when saved to ESRI Shapefile.
+  gdf.to_file(os.path.join(shp_dir, f"{name}.shp"))
+C:\Users\nyimi\miniconda3\Lib\site-packages\pyogrio\raw.py:733: RuntimeWarning: Normalized/laundered field name: 'transformer_id' to 'transforme'
+  ogr_write(
+C:\Users\nyimi\miniconda3\Lib\site-packages\pyogrio\raw.py:733: RuntimeWarning: Normalized/laundered field name: 'cable_size_mm2' to 'cable_size'
+  ogr_write(
+C:\Users\nyimi\miniconda3\Lib\site-packages\pyogrio\raw.py:733: RuntimeWarning: Normalized/laundered field name: 'voltage_drop_pct' to 'voltage_dr'
+  ogr_write(
+C:\Users\nyimi\miniconda3\Lib\site-packages\pyogrio\raw.py:733: RuntimeWarning: Normalized/laundered field name: 'feeder_load_mw' to 'feeder_loa'
+  ogr_write(
+C:\Users\nyimi\miniconda3\Lib\site-packages\pyogrio\raw.py:733: RuntimeWarning: Normalized/laundered field name: 'rated_current_a' to 'rated_curr'
+  ogr_write(
+2026-03-07 18:45:48 - pyogrio._io - INFO - Created 11 records
+2026-03-07 18:45:48 - pyogrio._io - INFO - Created 11 records
+2026-03-07 18:45:48 - PVLayoutEngine.visualization - INFO -   Saving corridors (8 features)...
+2026-03-07 18:45:48 - pyogrio._io - INFO - Created 8 records
+D:\Triune\Stack Space - Documents\Code\PVLayoutEngine\visualization\map_generator.py:49: UserWarning: Column names longer than 10 characters will be truncated when saved to ESRI Shapefile.
+  gdf.to_file(os.path.join(shp_dir, f"{name}.shp"))
+C:\Users\nyimi\miniconda3\Lib\site-packages\pyogrio\raw.py:733: RuntimeWarning: Normalized/laundered field name: 'corridor_type' to 'corridor_t'
+  ogr_write(
+2026-03-07 18:45:48 - pyogrio._io - INFO - Created 8 records
+2026-03-07 18:45:48 - pyogrio._io - INFO - Created 8 records
+2026-03-07 18:45:48 - PVLayoutEngine.visualization - INFO - Generating layout map...
+2026-03-07 18:45:57 - PVLayoutEngine.visualization - INFO - Layout map saved to outputs\layout_map.png
+2026-03-07 18:45:57 - PVLayoutEngine.visualization - INFO - Generating interactive Folium layout map...
+2026-03-07 18:45:59 - PVLayoutEngine.visualization - INFO - Interactive map saved to outputs\layout_map.html
+2026-03-07 18:45:59 - PVLayoutEngine.visualization - INFO - Generating terrain maps (Phase 1 & 2)...
+2026-03-07 18:46:00 - PVLayoutEngine.visualization - INFO -   Saved: outputs\terrain_slope_map.png
+2026-03-07 18:46:03 - PVLayoutEngine.visualization - INFO -   Saved: outputs\terrain_aspect_map.png
+2026-03-07 18:46:05 - PVLayoutEngine.visualization - INFO -   Saved: outputs\terrain_ruggedness_map.png
+2026-03-07 18:46:06 - PVLayoutEngine.visualization - INFO -   Saved: outputs\terrain_valley_tpi_map.png
+2026-03-07 18:46:07 - PVLayoutEngine.visualization - INFO -   Saved: outputs\terrain_hillshade_map.png
+D:\Triune\Stack Space - Documents\Code\PVLayoutEngine\visualization\map_generator.py:496: UserWarning: Legend does not support handles for PatchCollection instances.
+See: https://matplotlib.org/stable/tutorials/intermediate/legend_guide.html#implementing-a-custom-legend-handler
+  handles, labels = ax.get_legend_handles_labels()
+2026-03-07 18:46:09 - PVLayoutEngine.visualization - INFO -   Saved: outputs\terrain_constraints_map.png
+2026-03-07 18:46:10 - PVLayoutEngine.visualization - INFO -   Saved: outputs\terrain_slope_suitability_map.png
+2026-03-07 18:46:11 - PVLayoutEngine.visualization - INFO -   Saved: outputs\terrain_aspect_suitability_map.png
+2026-03-07 18:46:13 - PVLayoutEngine.visualization - INFO -   Saved: outputs\terrain_suitability_map.png
+2026-03-07 18:46:13 - PVLayoutEngine.outputs - INFO - Compiling engineering metrics...
+2026-03-07 18:46:13 - PVLayoutEngine.yield - WARNING -   R4: nrel-pysam not installed. Falling back to PVWatts API.
+2026-03-07 18:46:13 - PVLayoutEngine.yield - INFO -   R4: Attempting PVWatts V8 API (fallback)...
+2026-03-07 18:46:15 - PVLayoutEngine.yield - WARNING -   PVWatts API error 429: {
+  "error": {
+    "code": "OVER_RATE_LIMIT",
+    "message": "You have exceeded your rate limit. Try again later or contact us at https://developer.nrel.gov/contact/ for assistance"
+  }
+}
+2026-03-07 18:46:15 - PVLayoutEngine.yield - INFO -   R4: Falling back to latitude-based yield proxy.
+2026-03-07 18:46:15 - PVLayoutEngine.terrain - INFO -   Earthworks max_cut threshold scaled to 1.50m (DEM res=10.0m, scale=1.0╫)
+2026-03-07 18:46:15 - PVLayoutEngine.outputs - INFO - Generating Markdown Engineering Report...
+2026-03-07 18:46:15 - PVLayoutEngine.outputs - INFO - Report generated: outputs\engineering_report.md
+2026-03-07 18:46:15 - PVLayoutEngine - INFO - ============================================================
+2026-03-07 18:46:15 - PVLayoutEngine - INFO -   PV Layout Engine Pipeline ù COMPLETE
+2026-03-07 18:46:15 - PVLayoutEngine - INFO -   Outputs: outputs/
+2026-03-07 18:46:15 - PVLayoutEngine - INFO -   Blocks: 11, Rows: 1098,
+2026-03-07 18:46:15 - PVLayoutEngine - INFO -   Installed: 31.94 MWac / 39.05 MWdc
+2026-03-07 18:46:15 - PVLayoutEngine - INFO - ============================================================

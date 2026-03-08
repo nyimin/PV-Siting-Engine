@@ -4,6 +4,7 @@ import logging
 import argparse
 import geopandas as gpd
 from pyproj import CRS
+from shapely.geometry import Point
 
 from utils.config_loader import load_config, setup_logging
 from terrain.dem_downloader import fetch_dem
@@ -145,6 +146,11 @@ def run_pipeline(input_boundary_path, requested_mw, config_path="config/config.y
 
     total_buildable_ha = buildable_gdf["area_ha"].sum()
     capacity_info = calculate_feasible_capacity(total_buildable_ha, requested_mw, config)
+    
+    # Inject the derived target AC capacity into config for block generator to use
+    if "project" not in config:
+        config["project"] = {}
+    config["project"]["target_ac_mw"] = capacity_info["required_mw_ac"]
 
     # ========== PHASE 5: BOP ZONE RESERVATION (must run before panel layout) ==========
     logger.info("=" * 50)
@@ -185,7 +191,7 @@ def run_pipeline(input_boundary_path, requested_mw, config_path="config/config.y
     logger.info("=" * 50)
 
     corridor_gdf, corridor_reduced_gdf, corridor_info = plan_corridors(
-        reduced_buildable_gdf, sub_pt, config
+        reduced_buildable_gdf, sub_pt, config, terrain_paths=terrain_paths
     )
 
     # ========== PHASE 6: LAYOUT GENERATION (on corridor-free buildable area) ==========
@@ -224,10 +230,75 @@ def run_pipeline(input_boundary_path, requested_mw, config_path="config/config.y
     logger.info("=" * 50)
 
     inverters_gdf, transformers_gdf = place_inverters_and_transformers(
-        blocks_gdf, rows_gdf, config, sub_pt, 
+        blocks_gdf, rows_gdf, config, sub_pt,
         corridor_info=corridor_info
     )
     lv_cables_gdf = None  # LV cabling removed in Phase 1 stabilisation — placeholder had no engineering value
+
+    # ========== PHASE 7 FEEDBACK: BOP ELECTRICAL CENTROID CHECK (R3) ==========
+    # After blocks are placed, compute the capacity-weighted Electrical Centre of Gravity
+    # (ECG). If the ECG is significantly offset from the substation, re-site the BOP
+    # zone towards the ECG so MV cable runs are minimised (Sicuaio et al. 2024).
+    ecg_threshold_m = config.get("bop_siting", {}).get("ecg_feedback_threshold_m", 300)
+    if not transformers_gdf.empty and ecg_threshold_m > 0:
+        try:
+            tx_with_cap = transformers_gdf.copy()
+            if "block_id" in tx_with_cap.columns and "block_id" in blocks_gdf.columns:
+                tx_with_cap = tx_with_cap.merge(
+                    blocks_gdf[["block_id", "capacity_ac_mw"]], on="block_id", how="left"
+                )
+            else:
+                tx_with_cap["capacity_ac_mw"] = 1.0
+
+            w = tx_with_cap["capacity_ac_mw"].fillna(1.0)
+            cx_ecg = (tx_with_cap.geometry.x * w).sum() / w.sum()
+            cy_ecg = (tx_with_cap.geometry.y * w).sum() / w.sum()
+            ecg_pt = Point(cx_ecg, cy_ecg)
+            ecg_dist = ecg_pt.distance(sub_pt)
+            logger.info(
+                f"  R3 Electrical Centre of Gravity: ({cx_ecg:.0f}, {cy_ecg:.0f}) — "
+                f"{ecg_dist:.0f}m from substation"
+            )
+
+            if ecg_dist > ecg_threshold_m:
+                logger.warning(
+                    f"  R3 ECG offset ({ecg_dist:.0f}m) exceeds threshold ({ecg_threshold_m}m). "
+                    f"Re-siting BOP using ECG as proximity hint..."
+                )
+                import copy
+                cfg_override = copy.deepcopy(config)
+                cfg_override.setdefault("bop_siting", {}).setdefault("weights", {})
+                cfg_override["bop_siting"]["weights"]["proximity_poi"] = 0.50
+
+                (
+                    sub_pt, substation_gdf, bess_gdf, om_gdf, guard_gdf,
+                    bop_zone_gdf, reduced_buildable_gdf
+                ) = reserve_bop_zone(
+                    site_gdf, buildable_gdf, exclusions_gdf, cfg_override,
+                    slope_path=slope_path, poi_coord=(cx_ecg, cy_ecg)
+                )
+
+                # Re-run corridors + block layout from the new BOP footprint
+                corridor_gdf, corridor_reduced_gdf, corridor_info = plan_corridors(
+                    reduced_buildable_gdf, sub_pt, cfg_override,
+                    terrain_paths=terrain_paths
+                )
+                blocks_gdf, rows_gdf, _ = generate_solar_blocks(
+                    corridor_reduced_gdf, cfg_override, terrain_paths
+                )
+                inverters_gdf, transformers_gdf = place_inverters_and_transformers(
+                    blocks_gdf, rows_gdf, cfg_override, sub_pt,
+                    corridor_info=corridor_info
+                )
+                logger.info("  R3 BOP feedback re-siting complete.")
+            else:
+                logger.info(
+                    f"  R3 ECG within threshold ({ecg_dist:.0f}m ≤ {ecg_threshold_m}m). "
+                    "No BOP re-siting required."
+                )
+        except Exception as _ecg_err:
+            logger.warning(f"  R3 ECG feedback check failed (non-fatal): {_ecg_err}")
+
 
     roads_gdf, mv_cables_gdf = route_mv_cables_and_roads(
         inverters_gdf, transformers_gdf, sub_pt, blocks_gdf, config,

@@ -34,6 +34,11 @@ bop_siting:
   interior_grid_spacing_m: 80
   # Maximum acceptable mean slope (degrees) across compound footprint.
   max_compound_slope_deg: 5.0
+  # R3: BOP Electrical Centre of Gravity feedback threshold.
+  # If the weighted centroid of all transformers is > this many metres from
+  # the substation after Phase 6, BOP siting is re-run with proximity_poi
+  # weight raised to 0.50.  Set to 0 to disable.
+  ecg_feedback_threshold_m: 300
 
 om_compound:
   # O&M office + workshop + warehouse (IEA-PVPS T13 / IRENA BOP)
@@ -51,6 +56,12 @@ roads:
   max_gradient_pct: 5 # monsoon drainage and vehicle safety
   grid_resolution_m: 15 # routing grid resolution
   road_surface_buffer: true # generate road surface polygons for area accounting
+  # R2: Terrain-guided tertiary aisle generation (Road-First Tessellation).
+  # When true, a 6 m aisle is pre-carved along the lowest-slope N-S axis
+  # inside each block cell BEFORE tessellation, replacing the centroid canyon.
+  tertiary_aisles_enabled: false
+  tertiary_aisle_width_m: 6
+  tertiary_aisle_slope_search_step_m: 10 # grid spacing (m) for slope sampling
 
 mv_cables:
   # 33 kV AC Collection System (IEC 60502-2 / IEC 60287)
@@ -173,6 +184,12 @@ block:
   strings_per_table: 2
   # Minimum fraction of target string count required to accept a block (industry: 60-70%)
   min_fill_fraction: 0.60
+  # R1: Grid-Origin Optimizer (Vinco 2018 "Virtual Grid Floorplanning").
+  # Searches (dx, dy) offsets in origin_search_step_m increments to maximise
+  # recovered strings at paddock edges.  Set step to 0 to disable.
+  # origin_search_step_m: 0.5
+  origin_search_step_m: 1.0
+  origin_search_max_steps: 20
 
 buffers:
   buildings_m: 30
@@ -192,3 +209,15 @@ lulc:
 # Industry standard: ~5 ha (one standard 3.2 MWac block footprint ≈ 2.5–4 ha)
 buildable_area:
   min_patch_ha: 5.0
+
+# ─────────────────────────────────────────────────────────────────────────────
+# YIELD MODEL  (R4 — PySAM three-path engine)
+# ─────────────────────────────────────────────────────────────────────────────
+yield:
+  # Engine selection: "pysam" | "pvwatts" | "proxy"
+  # pysam  — uses nrel-pysam for shade-aware simulation (bankable-grade)
+  # pvwatts — NREL PVWatts V8 REST API (lumped, no shading)
+  # proxy  — latitude-based offline estimate (development only)
+  engine: pysam
+  pysam_weather_source: nsrdb # NSRDB PSM3 TMY via PySAM ResourceTools
+  shading_scene_max_rows: 500 # sub-sample if site has > 500 PV rows
